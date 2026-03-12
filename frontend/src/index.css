@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@layer theme {
+  :root {
+    --color-primary: #2563EB;
+    --color-bg: #0f172a;
+    --color-text: #f1f5f9;
+  }
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: 'DM Sans', sans-serif;
+}

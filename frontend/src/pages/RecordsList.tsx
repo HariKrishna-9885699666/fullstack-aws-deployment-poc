@@ -6,10 +6,14 @@ import { Button } from '../components/Button';
 import { format } from 'date-fns';
 import { cn } from '../lib/utils';
 import { useState } from 'react';
+import { useToast } from '../components/Toast';
+import { ConfirmModal } from '../components/Modal';
 
 export function RecordsList() {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
+  const { showToast } = useToast();
+  const [deleteModalId, setDeleteModalId] = useState<string | null>(null);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['records', page, statusFilter],
@@ -31,14 +35,14 @@ export function RecordsList() {
   };
 
   const deleteRecord = async (id: string) => {
-    if (confirm('Are you sure you want to delete this record?')) {
-      try {
-        await api.delete(`/records/${id}`);
-        refetch();
-      } catch (err) {
-        alert('Failed to delete record');
-      }
+    try {
+      await api.delete(`/records/${id}`);
+      showToast('Record deleted successfully', 'success');
+      refetch();
+    } catch (err) {
+      showToast('Failed to delete record', 'error');
     }
+    setDeleteModalId(null);
   };
 
   return (
@@ -53,7 +57,7 @@ export function RecordsList() {
           <select 
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="bg-slate-800 border-slate-700 text-slate-100 text-sm rounded-lg focus:ring-primary focus:border-primary block p-2.5 outline-none w-full sm:w-auto"
+            className="bg-slate-800 border-slate-700 text-slate-100 text-sm rounded-lg focus:ring-primary focus:border-primary block p-2.5 outline-none w-full sm:w-auto cursor-pointer"
           >
             <option value="">All Statuses</option>
             <option value="NEW">New</option>
@@ -134,7 +138,7 @@ export function RecordsList() {
                           Edit
                         </Link>
                         <button 
-                          onClick={() => deleteRecord(record.id)}
+                          onClick={() => setDeleteModalId(record.id)}
                           className="text-red-500 hover:text-red-400 p-1"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -175,6 +179,17 @@ export function RecordsList() {
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        isOpen={deleteModalId !== null}
+        onClose={() => setDeleteModalId(null)}
+        onConfirm={() => deleteModalId && deleteRecord(deleteModalId)}
+        title="Delete Record"
+        message="Are you sure you want to delete this record? This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        variant="danger"
+      />
     </div>
   );
 }

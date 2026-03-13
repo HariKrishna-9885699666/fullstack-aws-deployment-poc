@@ -8,6 +8,7 @@ import { RecordsList } from './pages/RecordsList';
 import { NewRecord } from './pages/NewRecord';
 import { RecordDetail } from './pages/RecordDetail';
 import { useAuthStore } from './store/authStore';
+import { ToastProvider } from './components/Toast';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -29,20 +30,22 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          
-          <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/records" element={<RecordsList />} />
-            <Route path="/records/new" element={<NewRecord />} />
-            <Route path="/records/:id" element={<RecordDetail />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+      <ToastProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            
+            <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/records" element={<RecordsList />} />
+              <Route path="/records/new" element={<NewRecord />} />
+              <Route path="/records/:id" element={<RecordDetail />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </ToastProvider>
     </QueryClientProvider>
   );
 }

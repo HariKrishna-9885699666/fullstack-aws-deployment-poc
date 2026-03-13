@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { RecordEntity } from '../records/entities/record.entity';
+import { RecordEntity, RecordStatus, ProcessingStatus } from '../records/entities/record.entity';
 import Redis from 'ioredis';
 import { Logger } from '@nestjs/common';
 
@@ -28,18 +28,16 @@ export class DashboardService {
         return JSON.parse(cached);
       }
 
-      // Cache miss - compute from DB
       const totalRecords = await this.recordsRepository.count({ where: { owner: { id: userId } } });
 
-      // Grouping queries for counts could be optimized with query builder, but multiple counts simulate read-heavy endpoint
-      const newCount = await this.recordsRepository.count({ where: { owner: { id: userId }, status: 'NEW' as any } });
-      const inProgressCount = await this.recordsRepository.count({ where: { owner: { id: userId }, status: 'IN_PROGRESS' as any } });
-      const doneCount = await this.recordsRepository.count({ where: { owner: { id: userId }, status: 'DONE' as any } });
+      const newCount = await this.recordsRepository.count({ where: { owner: { id: userId }, status: RecordStatus.NEW } });
+      const inProgressCount = await this.recordsRepository.count({ where: { owner: { id: userId }, status: RecordStatus.IN_PROGRESS } });
+      const doneCount = await this.recordsRepository.count({ where: { owner: { id: userId }, status: RecordStatus.DONE } });
 
-      const pendingCount = await this.recordsRepository.count({ where: { owner: { id: userId }, processing_status: 'PENDING' as any } });
-      const processingCount = await this.recordsRepository.count({ where: { owner: { id: userId }, processing_status: 'PROCESSING' as any } });
-      const completedCount = await this.recordsRepository.count({ where: { owner: { id: userId }, processing_status: 'COMPLETED' as any } });
-      const failedCount = await this.recordsRepository.count({ where: { owner: { id: userId }, processing_status: 'FAILED' as any } });
+      const pendingCount = await this.recordsRepository.count({ where: { owner: { id: userId }, processing_status: ProcessingStatus.PENDING } });
+      const processingCount = await this.recordsRepository.count({ where: { owner: { id: userId }, processing_status: ProcessingStatus.PROCESSING } });
+      const completedCount = await this.recordsRepository.count({ where: { owner: { id: userId }, processing_status: ProcessingStatus.COMPLETED } });
+      const failedCount = await this.recordsRepository.count({ where: { owner: { id: userId }, processing_status: ProcessingStatus.FAILED } });
 
       const recentRecords = await this.recordsRepository.find({
         where: { owner: { id: userId } },
@@ -63,7 +61,6 @@ export class DashboardService {
         recentRecords,
       };
 
-      // Store in cache for 60 seconds
       await this.redis.set(cacheKey, JSON.stringify(summary), 'EX', 60);
 
       this.logger.log(`Dashboard summary computed and cached for user: ${userId}`);

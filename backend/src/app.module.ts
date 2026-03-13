@@ -8,6 +8,7 @@ import { RecordsModule } from './records/records.module';
 import { AuthModule } from './auth/auth.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { RecordEntity } from './records/entities/record.entity';
 
 @Module({
   imports: [
@@ -20,10 +21,11 @@ import { DashboardModule } from './dashboard/dashboard.module';
         type: 'postgres',
         url: configService.get<string>('DATABASE_URL'),
         autoLoadEntities: true,
-        synchronize: process.env.NODE_ENV !== 'production', // Use migrations in production
+        synchronize: process.env.NODE_ENV !== 'production',
       }),
       inject: [ConfigService],
     }),
+    TypeOrmModule.forFeature([RecordEntity]),
     UsersModule,
     RecordsModule,
     AuthModule,

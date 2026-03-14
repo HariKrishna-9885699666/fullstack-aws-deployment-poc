@@ -41,26 +41,25 @@ This guide will help you deploy a full-stack application with:
 - HTTPS enabled with ACM certificates
 
 **Backend:**
-- NestJS API running on ECS Fargate
-- Application Load Balancer for traffic distribution
-- Auto-scaling based on CPU/memory metrics
-- Blue/Green deployments via CodeDeploy
+- NestJS API running on AWS Lambda wrapper
+- Amazon API Gateway for traffic distribution
+- Auto-scaling up to 1000 concurrent executions
+- Simple deployments via Serverless Framework
 
 **Worker:**
-- Asynchronous processing service on ECS Fargate
-- Consumes messages from SQS queue
+- Asynchronous processing service via AWS Lambda
+- Triggered directly by SQS queue events
 - Updates processing status in RDS
 
 **Data Layer:**
-- RDS PostgreSQL for relational data
-- ElastiCache Redis for caching
+- RDS PostgreSQL for relational data (Free Tier eligible)
+- ElastiCache Redis for caching (Free Tier eligible)
 - S3 for file uploads
 - SQS for async job queue
 
 **CI/CD:**
 - GitHub Actions for automation
-- ECR for Docker image storage
-- CodeDeploy for zero-downtime deployments
+- Serverless Framework for zero-downtime deployments
 - CloudWatch for monitoring and logging
 
 ### 1.2 Architecture Diagram
@@ -74,23 +73,23 @@ This guide will help you deploy a full-stack application with:
                   ┌─────────────┴────────────┐
                   │                          │
          ┌────────▼────────┐        ┌───────▼────────┐
-         │  CloudFront CDN │        │   Application  │
-         │  (Frontend)     │        │ Load Balancer  │
+         │  CloudFront CDN │        │  API Gateway   │
+         │  (Frontend)     │        │    (REST)      │
          └────────┬────────┘        └───────┬────────┘
                   │                          │
          ┌────────▼────────┐        ┌───────▼────────┐
-         │   S3 Bucket     │        │   ECS Fargate  │
+         │   S3 Bucket     │        │   AWS Lambda   │
          │ (Static Assets) │        │  (API Service) │
          └─────────────────┘        └───────┬────────┘
                                              │
                   ┌──────────────────────────┼────────────────┐
                   │                          │                │
          ┌────────▼────────┐        ┌───────▼────────┐  ┌───▼────┐
-         │   ECS Fargate   │        │   RDS Postgres │  │  Redis │
+         │   AWS Lambda    │        │   RDS Postgres │  │  Redis │
          │ (Worker Service)│        │   (Database)   │  │ (Cache)│
-         └────────┬────────┘        └────────────────┘  └────────┘
+         └────────▲────────┘        └────────────────┘  └────────┘
                   │
-         ┌────────▼────────┐
+         ┌────────┴────────┐
          │   SQS Queue     │
          │ (Async Jobs)    │
          └─────────────────┘
@@ -103,12 +102,12 @@ This guide will help you deploy a full-stack application with:
 
 ### 1.3 Why This Architecture?
 
-| Before (Single Server) | After (AWS Scaled) | Benefit |
+| Before (Single Server) | After (AWS Serverless) | Benefit |
 |------------------------|-------------------|---------|
-| Single EC2 instance | ECS Fargate cluster | Horizontal scaling |
-| Deployment downtime | Blue/Green deployment | Zero-downtime releases |
+| Single EC2 instance | AWS Lambda | Instant scaling, $0 idle cost |
+| Deployment downtime | Serverless Deploy | Fast, zero-downtime releases |
 | Files on server disk | S3 storage | Stateless, scalable |
-| Blocking operations | SQS + Worker | Async processing |
+| Blocking operations | SQS + Lambda Worker| Async processing |
 | No caching | Redis cache | Faster response times |
 | Manual deployment | CI/CD automation | Faster, safer releases |
 | Limited monitoring | CloudWatch metrics | Full observability |
@@ -171,24 +170,20 @@ sudo apt-get install jq  # Ubuntu/Debian
 
 | Service | Configuration | Monthly Cost |
 |---------|--------------|--------------|
-| ECS Fargate | 2 API tasks (0.25 vCPU, 0.5GB) | ~$15 |
-| ECS Fargate | 1 Worker task (0.25 vCPU, 0.5GB) | ~$7 |
-| RDS PostgreSQL | db.t3.micro | ~$15 |
-| ElastiCache Redis | cache.t3.micro | ~$12 |
-| Application Load Balancer | 1 ALB | ~$20 |
-| S3 | < 100GB storage + requests | ~$5 |
-| CloudFront | < 1TB transfer | ~$10 |
-| NAT Gateway | 1 NAT Gateway | ~$35 |
-| SQS | < 1M requests | Free tier |
-| CloudWatch | Basic monitoring | ~$5 |
-| **TOTAL** | | **~$124/month** |
+| AWS Lambda | API requests < 1M/mo | $0 (Free Tier) |
+| API Gateway | API requests < 1M/mo | $0 (Free Tier) |
+| RDS PostgreSQL | db.t3.micro (750hrs/mo) | $0 (Free Tier) |
+| ElastiCache Redis | cache.t3.micro (750hrs/mo)| $0 (Free Tier) |
+| S3 | < 5GB storage + requests | $0 (Free Tier) |
+| CloudFront | < 1TB transfer | $0 (Free Tier) |
+| SQS | < 1M requests | $0 (Free Tier) |
+| CloudWatch | Basic monitoring | $0 (Free Tier) |
+| **TOTAL** | | **$0/month** |
 
-**Cost optimization tips:**
-- Use t3/t4g instances where possible
-- Delete NAT Gateway in dev (use VPC endpoints instead)
-- Enable S3 lifecycle policies
-- Use CloudWatch log retention policies
-- Shut down dev environments when not in use
+**Cost optimizations:**
+- This architecture keeps you within the AWS Free tier limits.
+- Turn off your RDS and Redis instances manually if you aren't using them, to conserve the 750 free tier hours per month.
+- Ensure proper S3 lifecycle policies to clear old files.
 
 ---
 
@@ -564,33 +559,25 @@ aws ec2 authorize-security-group-ingress \
   --region $AWS_REGION
 ```
 
-**Step 2: ECS Tasks Security Group**
+**Step 2: Lambda Tasks Security Group**
 ```bash
-# Create ECS Security Group (allows traffic from ALB)
-ECS_SG_ID=$(aws ec2 create-security-group \
-  --group-name "${PROJECT_NAME}-ecs-sg" \
-  --description "Security group for ECS tasks" \
+# Create Lambda Security Group (allows outbound traffic to RDS/Redis)
+LAMBDA_SG_ID=$(aws ec2 create-security-group \
+  --group-name "${PROJECT_NAME}-lambda-sg" \
+  --description "Security group for Lambda functions" \
   --vpc-id $VPC_ID \
-  --tag-specifications "ResourceType=security-group,Tags=[{Key=Name,Value=${PROJECT_NAME}-ecs-sg}]" \
+  --tag-specifications "ResourceType=security-group,Tags=[{Key=Name,Value=${PROJECT_NAME}-lambda-sg}]" \
   --region $AWS_REGION \
   --query 'GroupId' \
   --output text)
 
-echo "ECS Security Group: $ECS_SG_ID"
+echo "Lambda Security Group: $LAMBDA_SG_ID"
 
-# Allow traffic from ALB on port 3000 (NestJS default)
+# Allow traffic from within Lambda security group
 aws ec2 authorize-security-group-ingress \
-  --group-id $ECS_SG_ID \
-  --protocol tcp \
-  --port 3000 \
-  --source-group $ALB_SG_ID \
-  --region $AWS_REGION
-
-# Allow traffic from within ECS security group (for service discovery)
-aws ec2 authorize-security-group-ingress \
-  --group-id $ECS_SG_ID \
+  --group-id $LAMBDA_SG_ID \
   --protocol -1 \
-  --source-group $ECS_SG_ID \
+  --source-group $LAMBDA_SG_ID \
   --region $AWS_REGION
 ```
 
@@ -608,12 +595,12 @@ RDS_SG_ID=$(aws ec2 create-security-group \
 
 echo "RDS Security Group: $RDS_SG_ID"
 
-# Allow PostgreSQL from ECS tasks
+# Allow PostgreSQL from Lambda functions
 aws ec2 authorize-security-group-ingress \
   --group-id $RDS_SG_ID \
   --protocol tcp \
   --port 5432 \
-  --source-group $ECS_SG_ID \
+  --source-group $LAMBDA_SG_ID \
   --region $AWS_REGION
 ```
 
@@ -631,12 +618,12 @@ REDIS_SG_ID=$(aws ec2 create-security-group \
 
 echo "Redis Security Group: $REDIS_SG_ID"
 
-# Allow Redis from ECS tasks
+# Allow Redis from Lambda functions
 aws ec2 authorize-security-group-ingress \
   --group-id $REDIS_SG_ID \
   --protocol tcp \
   --port 6379 \
-  --source-group $ECS_SG_ID \
+  --source-group $LAMBDA_SG_ID \
   --region $AWS_REGION
 ```
 
@@ -644,7 +631,7 @@ aws ec2 authorize-security-group-ingress \
 ```bash
 cat >> ~/fileflow-network-config.sh << EOF
 export ALB_SG_ID="$ALB_SG_ID"
-export ECS_SG_ID="$ECS_SG_ID"
+export LAMBDA_SG_ID="$LAMBDA_SG_ID"
 export RDS_SG_ID="$RDS_SG_ID"
 export REDIS_SG_ID="$REDIS_SG_ID"
 EOF
@@ -1162,712 +1149,93 @@ echo "Docker authenticated with ECR"
 # Navigate to your project directory
 cd /Users/hari/Documents/E/fullstack-aws-deployment-poc
 
-# Build backend Docker image
-docker build -t $BACKEND_REPO_NAME:latest ./backend
+## 7. Serverless Backend Deployment
 
-# Tag image for ECR
-docker tag $BACKEND_REPO_NAME:latest $BACKEND_REPO_URI:latest
-docker tag $BACKEND_REPO_NAME:latest $BACKEND_REPO_URI:v1.0.0
+### 7.1 Setup Serverless Configuration
 
-# Push to ECR
-docker push $BACKEND_REPO_URI:latest
-docker push $BACKEND_REPO_URI:v1.0.0
-
-echo "Backend image pushed to ECR"
+**Step 1: Install Serverless Framework globally**
+```bash
+npm install -g serverless
 ```
 
-**Step 3: Build and Push Worker Image**
-```bash
-# Build worker Docker image
-docker build -t $WORKER_REPO_NAME:latest ./worker
+**Step 2: Backend `serverless.yml`**
+Ensure your `backend/serverless.yml` is configured to connect to your resources (VPC, RDS, Redis, SQS, S3).
+Example:
+```yaml
+service: fileflow-backend
 
-# Tag image for ECR
-docker tag $WORKER_REPO_NAME:latest $WORKER_REPO_URI:latest
-docker tag $WORKER_REPO_NAME:latest $WORKER_REPO_URI:v1.0.0
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1
+  vpc:
+    securityGroupIds:
+      - ${env:LAMBDA_SG_ID}
+    subnetIds:
+      - ${env:PRIVATE_SUBNET_1}
+      - ${env:PRIVATE_SUBNET_2}
+  environment:
+    DATABASE_URL: ${env:DATABASE_URL}
+    REDIS_URL: ${env:REDIS_URL}
+    SQS_QUEUE_URL: ${env:SQS_QUEUE_URL}
+    S3_BUCKET_NAME: ${env:S3_BUCKET_NAME}
 
-# Push to ECR
-docker push $WORKER_REPO_URI:latest
-docker push $WORKER_REPO_URI:v1.0.0
-
-echo "Worker image pushed to ECR"
+functions:
+  api:
+    handler: dist/serverless.handler
+    events:
+      - http:
+          path: /
+          method: ANY
+          cors: true
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors: true
 ```
 
-**Step 4: Verify Images**
-```bash
-# List backend images
-aws ecr list-images \
-  --repository-name $BACKEND_REPO_NAME \
-  --region $AWS_REGION
+**Step 3: Worker `serverless.yml`**
+Ensure your `worker/serverless.yml` is configured to trigger from SQS.
+Example:
+```yaml
+service: fileflow-worker
 
-# List worker images
-aws ecr list-images \
-  --repository-name $WORKER_REPO_NAME \
-  --region $AWS_REGION
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1
+  vpc:
+    securityGroupIds:
+      - ${env:LAMBDA_SG_ID}
+    subnetIds:
+      - ${env:PRIVATE_SUBNET_1}
+      - ${env:PRIVATE_SUBNET_2}
+  environment:
+    DATABASE_URL: ${env:DATABASE_URL}
+    S3_BUCKET_NAME: ${env:S3_BUCKET_NAME}
+
+functions:
+  processor:
+    handler: dist/main.handler
+    events:
+      - sqs:
+          arn: ${env:SQS_QUEUE_ARN}
+          batchSize: 10
 ```
 
-**Step 5: Save ECR Configuration**
-```bash
-cat > ~/fileflow-ecr-config.sh << EOF
-export BACKEND_REPO_NAME="$BACKEND_REPO_NAME"
-export BACKEND_REPO_URI="$BACKEND_REPO_URI"
-export WORKER_REPO_NAME="$WORKER_REPO_NAME"
-export WORKER_REPO_URI="$WORKER_REPO_URI"
-EOF
-```
-
----
-
-## 8. Load Balancer Setup
-
-### 8.1 Create Application Load Balancer
-
-**Why:** ALB distributes traffic across multiple ECS tasks and provides health checks for zero-downtime deployments.
-
-**Step 1: Create Target Group**
-```bash
-# Create target group for backend API
-TG_NAME="${PROJECT_NAME}-backend-tg"
-
-TG_ARN=$(aws elbv2 create-target-group \
-  --name $TG_NAME \
-  --protocol HTTP \
-  --port 3000 \
-  --vpc-id $VPC_ID \
-  --target-type ip \
-  --health-check-enabled \
-  --health-check-protocol HTTP \
-  --health-check-path /health \
-  --health-check-interval-seconds 30 \
-  --health-check-timeout-seconds 5 \
-  --healthy-threshold-count 2 \
-  --unhealthy-threshold-count 3 \
-  --matcher HttpCode=200 \
-  --deregistration-delay-connection-termination-seconds 30 \
-  --tags "Key=Name,Value=${TG_NAME}" \
-  --region $AWS_REGION \
-  --query 'TargetGroups[0].TargetGroupArn' \
-  --output text)
-
-echo "Target Group ARN: $TG_ARN"
-```
-
-**Step 2: Create Application Load Balancer**
-```bash
-# Create ALB
-ALB_NAME="${PROJECT_NAME}-alb"
-
-ALB_ARN=$(aws elbv2 create-load-balancer \
-  --name $ALB_NAME \
-  --subnets $PUBLIC_SUBNET_1 $PUBLIC_SUBNET_2 \
-  --security-groups $ALB_SG_ID \
-  --scheme internet-facing \
-  --type application \
-  --ip-address-type ipv4 \
-  --tags "Key=Name,Value=${ALB_NAME}" \
-  --region $AWS_REGION \
-  --query 'LoadBalancers[0].LoadBalancerArn' \
-  --output text)
-
-echo "ALB ARN: $ALB_ARN"
-
-# Get ALB DNS name
-ALB_DNS=$(aws elbv2 describe-load-balancers \
-  --load-balancer-arns $ALB_ARN \
-  --region $AWS_REGION \
-  --query 'LoadBalancers[0].DNSName' \
-  --output text)
-
-echo "ALB DNS: $ALB_DNS"
-echo "Your API will be accessible at: http://$ALB_DNS"
-```
-
-**Step 3: Create Listener**
-```bash
-# Create HTTP listener (for now, will add HTTPS later if you have SSL cert)
-LISTENER_ARN=$(aws elbv2 create-listener \
-  --load-balancer-arn $ALB_ARN \
-  --protocol HTTP \
-  --port 80 \
-  --default-actions Type=forward,TargetGroupArn=$TG_ARN \
-  --region $AWS_REGION \
-  --query 'Listeners[0].ListenerArn' \
-  --output text)
-
-echo "Listener ARN: $LISTENER_ARN"
-```
-
-**Step 4: (Optional) Add HTTPS Listener with ACM Certificate**
-
-If you have a domain and want HTTPS:
+### 7.2 Deploy Services
 
 ```bash
-# First, request a certificate in ACM
-CERT_ARN=$(aws acm request-certificate \
-  --domain-name "api.${DOMAIN_NAME}" \
-  --subject-alternative-names "*.${DOMAIN_NAME}" \
-  --validation-method DNS \
-  --region $AWS_REGION \
-  --query 'CertificateArn' \
-  --output text)
-
-echo "Certificate ARN: $CERT_ARN"
-echo "Go to ACM console and complete DNS validation"
-echo "After validation is complete, run the following:"
-
-# Create HTTPS listener (run after cert is validated)
-cat << 'HEREDOC'
-aws elbv2 create-listener \
-  --load-balancer-arn $ALB_ARN \
-  --protocol HTTPS \
-  --port 443 \
-  --certificates CertificateArn=$CERT_ARN \
-  --default-actions Type=forward,TargetGroupArn=$TG_ARN \
-  --region $AWS_REGION
-HEREDOC
-```
-
-**Step 5: Enable Access Logs** (optional but recommended)
-```bash
-# Create S3 bucket for ALB logs
-ALB_LOGS_BUCKET="${PROJECT_NAME}-alb-logs-${AWS_ACCOUNT_ID}"
-
-aws s3 mb s3://$ALB_LOGS_BUCKET --region $AWS_REGION
-
-# Get ELB service account ID for your region
-# For us-east-1, it's 127311923021
-# Full list: https://docs.aws.amazon.com/elasticloadbalancing/latest/application/enable-access-logging.html
-
-ELB_ACCOUNT_ID="127311923021"  # us-east-1
-
-# Create bucket policy to allow ALB to write logs
-cat > /tmp/alb-logs-policy.json << EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "AWS": "arn:aws:iam::${ELB_ACCOUNT_ID}:root"
-      },
-      "Action": "s3:PutObject",
-      "Resource": "arn:aws:s3:::${ALB_LOGS_BUCKET}/AWSLogs/${AWS_ACCOUNT_ID}/*"
-    }
-  ]
-}
-EOF
-
-aws s3api put-bucket-policy \
-  --bucket $ALB_LOGS_BUCKET \
-  --policy file:///tmp/alb-logs-policy.json
-
-# Enable access logs on ALB
-aws elbv2 modify-load-balancer-attributes \
-  --load-balancer-arn $ALB_ARN \
-  --attributes \
-    Key=access_logs.s3.enabled,Value=true \
-    Key=access_logs.s3.bucket,Value=$ALB_LOGS_BUCKET \
-    Key=access_logs.s3.prefix,Value=${PROJECT_NAME}-alb \
-  --region $AWS_REGION
-
-echo "ALB access logs enabled"
-```
-
-**Step 6: Save ALB Configuration**
-```bash
-cat > ~/fileflow-alb-config.sh << EOF
-export ALB_NAME="$ALB_NAME"
-export ALB_ARN="$ALB_ARN"
-export ALB_DNS="$ALB_DNS"
-export TG_NAME="$TG_NAME"
-export TG_ARN="$TG_ARN"
-export LISTENER_ARN="$LISTENER_ARN"
-EOF
-```
-
----
-
-## 9. ECS Cluster & Services Setup
-
-### 9.1 Create IAM Roles for ECS
-
-**Step 1: Create ECS Task Execution Role**
-
-This role allows ECS to pull images from ECR and write logs to CloudWatch.
-
-```bash
-# Create trust policy
-cat > /tmp/ecs-task-execution-trust-policy.json << 'EOF'
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Service": "ecs-tasks.amazonaws.com"
-      },
-      "Action": "sts:AssumeRole"
-    }
-  ]
-}
-EOF
-
-# Create role
-TASK_EXECUTION_ROLE_NAME="${PROJECT_NAME}-ecs-task-execution-role"
-
-aws iam create-role \
-  --role-name $TASK_EXECUTION_ROLE_NAME \
-  --assume-role-policy-document file:///tmp/ecs-task-execution-trust-policy.json \
-  --tags "Key=Name,Value=${TASK_EXECUTION_ROLE_NAME}" \
-  --region $AWS_REGION
-
-# Attach AWS managed policy
-aws iam attach-role-policy \
-  --role-name $TASK_EXECUTION_ROLE_NAME \
-  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy \
-  --region $AWS_REGION
-
-# Add policy for Secrets Manager access (to retrieve DB password, etc.)
-cat > /tmp/secrets-policy.json << EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "secretsmanager:GetSecretValue"
-      ],
-      "Resource": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:${PROJECT_NAME}/*"
-    }
-  ]
-}
-EOF
-
-aws iam put-role-policy \
-  --role-name $TASK_EXECUTION_ROLE_NAME \
-  --policy-name SecretsManagerAccess \
-  --policy-document file:///tmp/secrets-policy.json
-
-# Get role ARN
-TASK_EXECUTION_ROLE_ARN=$(aws iam get-role \
-  --role-name $TASK_EXECUTION_ROLE_NAME \
-  --query 'Role.Arn' \
-  --output text)
-
-echo "Task Execution Role ARN: $TASK_EXECUTION_ROLE_ARN"
-```
-
-**Step 2: Create ECS Task Role**
-
-This role allows your application code to access AWS services (S3, SQS, etc.)
-
-```bash
-# Create task role
-TASK_ROLE_NAME="${PROJECT_NAME}-ecs-task-role"
-
-aws iam create-role \
-  --role-name $TASK_ROLE_NAME \
-  --assume-role-policy-document file:///tmp/ecs-task-execution-trust-policy.json \
-  --tags "Key=Name,Value=${TASK_ROLE_NAME}" \
-  --region $AWS_REGION
-
-# Create policy for application permissions
-cat > /tmp/task-role-policy.json << EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "s3:GetObject",
-        "s3:PutObject",
-        "s3:DeleteObject",
-        "s3:ListBucket"
-      ],
-      "Resource": [
-        "arn:aws:s3:::${UPLOADS_BUCKET}",
-        "arn:aws:s3:::${UPLOADS_BUCKET}/*"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "sqs:SendMessage",
-        "sqs:ReceiveMessage",
-        "sqs:DeleteMessage",
-        "sqs:GetQueueAttributes",
-        "sqs:GetQueueUrl"
-      ],
-      "Resource": [
-        "${QUEUE_ARN}",
-        "${DLQ_ARN}"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "secretsmanager:GetSecretValue"
-      ],
-      "Resource": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:${PROJECT_NAME}/*"
-    }
-  ]
-}
-EOF
-
-aws iam put-role-policy \
-  --role-name $TASK_ROLE_NAME \
-  --policy-name ApplicationPermissions \
-  --policy-document file:///tmp/task-role-policy.json
-
-# Get role ARN
-TASK_ROLE_ARN=$(aws iam get-role \
-  --role-name $TASK_ROLE_NAME \
-  --query 'Role.Arn' \
-  --output text)
-
-echo "Task Role ARN: $TASK_ROLE_ARN"
-```
-
-### 9.2 Create ECS Cluster
-
-```bash
-# Create ECS cluster
-CLUSTER_NAME="${PROJECT_NAME}-cluster"
-
-aws ecs create-cluster \
-  --cluster-name $CLUSTER_NAME \
-  --capacity-providers FARGATE FARGATE_SPOT \
-  --default-capacity-provider-strategy \
-    capacityProvider=FARGATE,weight=1,base=1 \
-    capacityProvider=FARGATE_SPOT,weight=4 \
-  --settings name=containerInsights,value=enabled \
-  --tags "Key=Name,Value=${CLUSTER_NAME},Key=Environment,Value=${ENVIRONMENT}" \
-  --region $AWS_REGION
-
-echo "ECS Cluster created: $CLUSTER_NAME"
-```
-
-### 9.3 Create CloudWatch Log Groups
-
-```bash
-# Create log group for backend
-BACKEND_LOG_GROUP="/ecs/${PROJECT_NAME}-backend"
-
-aws logs create-log-group \
-  --log-group-name $BACKEND_LOG_GROUP \
-  --region $AWS_REGION
-
-# Set retention policy (30 days)
-aws logs put-retention-policy \
-  --log-group-name $BACKEND_LOG_GROUP \
-  --retention-in-days 30 \
-  --region $AWS_REGION
-
-# Create log group for worker
-WORKER_LOG_GROUP="/ecs/${PROJECT_NAME}-worker"
-
-aws logs create-log-group \
-  --log-group-name $WORKER_LOG_GROUP \
-  --region $AWS_REGION
-
-aws logs put-retention-policy \
-  --log-group-name $WORKER_LOG_GROUP \
-  --retention-in-days 30 \
-  --region $AWS_REGION
-
-echo "Log groups created"
-```
-
-### 9.4 Create Task Definitions
-
-**Step 1: Backend Task Definition**
-
-```bash
-# Create backend task definition JSON
-cat > /tmp/backend-task-def.json << EOF
-{
-  "family": "${PROJECT_NAME}-backend",
-  "networkMode": "awsvpc",
-  "requiresCompatibilities": ["FARGATE"],
-  "cpu": "256",
-  "memory": "512",
-  "executionRoleArn": "${TASK_EXECUTION_ROLE_ARN}",
-  "taskRoleArn": "${TASK_ROLE_ARN}",
-  "containerDefinitions": [
-    {
-      "name": "backend",
-      "image": "${BACKEND_REPO_URI}:latest",
-      "essential": true,
-      "portMappings": [
-        {
-          "containerPort": 3000,
-          "protocol": "tcp"
-        }
-      ],
-      "environment": [
-        {
-          "name": "NODE_ENV",
-          "value": "production"
-        },
-        {
-          "name": "PORT",
-          "value": "3000"
-        },
-        {
-          "name": "AWS_REGION",
-          "value": "${AWS_REGION}"
-        },
-        {
-          "name": "S3_BUCKET_NAME",
-          "value": "${UPLOADS_BUCKET}"
-        },
-        {
-          "name": "SQS_QUEUE_URL",
-          "value": "${QUEUE_URL}"
-        },
-        {
-          "name": "REDIS_URL",
-          "value": "${REDIS_URL}"
-        }
-      ],
-      "secrets": [
-        {
-          "name": "DATABASE_URL",
-          "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:${PROJECT_NAME}/${ENVIRONMENT}/database-url"
-        }
-      ],
-      "logConfiguration": {
-        "logDriver": "awslogs",
-        "options": {
-          "awslogs-group": "${BACKEND_LOG_GROUP}",
-          "awslogs-region": "${AWS_REGION}",
-          "awslogs-stream-prefix": "ecs"
-        }
-      },
-      "healthCheck": {
-        "command": ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"],
-        "interval": 30,
-        "timeout": 5,
-        "retries": 3,
-        "startPeriod": 60
-      }
-    }
-  ]
-}
-EOF
-
-# Register task definition
-BACKEND_TASK_DEF_ARN=$(aws ecs register-task-definition \
-  --cli-input-json file:///tmp/backend-task-def.json \
-  --region $AWS_REGION \
-  --query 'taskDefinition.taskDefinitionArn' \
-  --output text)
-
-echo "Backend Task Definition: $BACKEND_TASK_DEF_ARN"
-```
-
-**Step 2: Worker Task Definition**
-
-```bash
-# Create worker task definition JSON
-cat > /tmp/worker-task-def.json << EOF
-{
-  "family": "${PROJECT_NAME}-worker",
-  "networkMode": "awsvpc",
-  "requiresCompatibilities": ["FARGATE"],
-  "cpu": "256",
-  "memory": "512",
-  "executionRoleArn": "${TASK_EXECUTION_ROLE_ARN}",
-  "taskRoleArn": "${TASK_ROLE_ARN}",
-  "containerDefinitions": [
-    {
-      "name": "worker",
-      "image": "${WORKER_REPO_URI}:latest",
-      "essential": true,
-      "environment": [
-        {
-          "name": "NODE_ENV",
-          "value": "production"
-        },
-        {
-          "name": "AWS_REGION",
-          "value": "${AWS_REGION}"
-        },
-        {
-          "name": "S3_BUCKET_NAME",
-          "value": "${UPLOADS_BUCKET}"
-        },
-        {
-          "name": "SQS_QUEUE_URL",
-          "value": "${QUEUE_URL}"
-        }
-      ],
-      "secrets": [
-        {
-          "name": "DATABASE_URL",
-          "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:${PROJECT_NAME}/${ENVIRONMENT}/database-url"
-        }
-      ],
-      "logConfiguration": {
-        "logDriver": "awslogs",
-        "options": {
-          "awslogs-group": "${WORKER_LOG_GROUP}",
-          "awslogs-region": "${AWS_REGION}",
-          "awslogs-stream-prefix": "ecs"
-        }
-      }
-    }
-  ]
-}
-EOF
-
-# Register task definition
-WORKER_TASK_DEF_ARN=$(aws ecs register-task-definition \
-  --cli-input-json file:///tmp/worker-task-def.json \
-  --region $AWS_REGION \
-  --query 'taskDefinition.taskDefinitionArn' \
-  --output text)
-
-echo "Worker Task Definition: $WORKER_TASK_DEF_ARN"
-```
-
-### 9.5 Create ECS Services
-
-**Step 1: Create Backend Service**
-
-```bash
-# Create backend service with ALB integration
-BACKEND_SERVICE_NAME="${PROJECT_NAME}-backend-service"
-
-aws ecs create-service \
-  --cluster $CLUSTER_NAME \
-  --service-name $BACKEND_SERVICE_NAME \
-  --task-definition ${PROJECT_NAME}-backend \
-  --desired-count 2 \
-  --launch-type FARGATE \
-  --platform-version LATEST \
-  --network-configuration "awsvpcConfiguration={subnets=[$PRIVATE_SUBNET_1,$PRIVATE_SUBNET_2],securityGroups=[$ECS_SG_ID],assignPublicIp=DISABLED}" \
-  --load-balancers "targetGroupArn=${TG_ARN},containerName=backend,containerPort=3000" \
-  --health-check-grace-period-seconds 60 \
-  --deployment-configuration "maximumPercent=200,minimumHealthyPercent=100" \
-  --enable-execute-command \
-  --tags "Key=Name,Value=${BACKEND_SERVICE_NAME},Key=Environment,Value=${ENVIRONMENT}" \
-  --region $AWS_REGION
-
-echo "Backend service created: $BACKEND_SERVICE_NAME"
-```
-
-**Step 2: Create Worker Service**
-
-```bash
-# Create worker service
-WORKER_SERVICE_NAME="${PROJECT_NAME}-worker-service"
-
-aws ecs create-service \
-  --cluster $CLUSTER_NAME \
-  --service-name $WORKER_SERVICE_NAME \
-  --task-definition ${PROJECT_NAME}-worker \
-  --desired-count 1 \
-  --launch-type FARGATE \
-  --platform-version LATEST \
-  --network-configuration "awsvpcConfiguration={subnets=[$PRIVATE_SUBNET_1,$PRIVATE_SUBNET_2],securityGroups=[$ECS_SG_ID],assignPublicIp=DISABLED}" \
-  --deployment-configuration "maximumPercent=200,minimumHealthyPercent=100" \
-  --enable-execute-command \
-  --tags "Key=Name,Value=${WORKER_SERVICE_NAME},Key=Environment,Value=${ENVIRONMENT}" \
-  --region $AWS_REGION
-
-echo "Worker service created: $WORKER_SERVICE_NAME"
-```
-
-**Step 3: Configure Auto Scaling for Backend**
-
-```bash
-# Register scalable target
-aws application-autoscaling register-scalable-target \
-  --service-namespace ecs \
-  --resource-id service/${CLUSTER_NAME}/${BACKEND_SERVICE_NAME} \
-  --scalable-dimension ecs:service:DesiredCount \
-  --min-capacity 2 \
-  --max-capacity 10 \
-  --region $AWS_REGION
-
-# Create scaling policy for CPU
-aws application-autoscaling put-scaling-policy \
-  --service-namespace ecs \
-  --resource-id service/${CLUSTER_NAME}/${BACKEND_SERVICE_NAME} \
-  --scalable-dimension ecs:service:DesiredCount \
-  --policy-name ${PROJECT_NAME}-backend-cpu-scaling \
-  --policy-type TargetTrackingScaling \
-  --target-tracking-scaling-policy-configuration '{
-    "TargetValue": 70.0,
-    "PredefinedMetricSpecification": {
-      "PredefinedMetricType": "ECSServiceAverageCPUUtilization"
-    },
-    "ScaleInCooldown": 300,
-    "ScaleOutCooldown": 60
-  }' \
-  --region $AWS_REGION
-
-# Create scaling policy for memory
-aws application-autoscaling put-scaling-policy \
-  --service-namespace ecs \
-  --resource-id service/${CLUSTER_NAME}/${BACKEND_SERVICE_NAME} \
-  --scalable-dimension ecs:service:DesiredCount \
-  --policy-name ${PROJECT_NAME}-backend-memory-scaling \
-  --policy-type TargetTrackingScaling \
-  --target-tracking-scaling-policy-configuration '{
-    "TargetValue": 80.0,
-    "PredefinedMetricSpecification": {
-      "PredefinedMetricType": "ECSServiceAverageMemoryUtilization"
-    },
-    "ScaleInCooldown": 300,
-    "ScaleOutCooldown": 60
-  }' \
-  --region $AWS_REGION
-
-echo "Auto-scaling configured for backend service"
-```
-
-**Step 4: Wait for Services to Stabilize**
-
-```bash
-# Wait for backend service to become stable
-echo "Waiting for backend service to become stable (this may take 5-10 minutes)..."
-aws ecs wait services-stable \
-  --cluster $CLUSTER_NAME \
-  --services $BACKEND_SERVICE_NAME \
-  --region $AWS_REGION
-
-# Wait for worker service to become stable
-echo "Waiting for worker service to become stable..."
-aws ecs wait services-stable \
-  --cluster $CLUSTER_NAME \
-  --services $WORKER_SERVICE_NAME \
-  --region $AWS_REGION
-
-echo "All services are stable and running!"
-```
-
-**Step 5: Test Backend API**
-
-```bash
-# Test the backend through ALB
-echo "Testing backend API at: http://$ALB_DNS/health"
-curl http://$ALB_DNS/health
-
-# Expected output: {"status":"ok"}
-```
-
-**Step 6: Save ECS Configuration**
-```bash
-cat > ~/fileflow-ecs-config.sh << EOF
-export CLUSTER_NAME="$CLUSTER_NAME"
-export TASK_EXECUTION_ROLE_ARN="$TASK_EXECUTION_ROLE_ARN"
-export TASK_ROLE_ARN="$TASK_ROLE_ARN"
-export BACKEND_SERVICE_NAME="$BACKEND_SERVICE_NAME"
-export WORKER_SERVICE_NAME="$WORKER_SERVICE_NAME"
-export BACKEND_LOG_GROUP="$BACKEND_LOG_GROUP"
-export WORKER_LOG_GROUP="$WORKER_LOG_GROUP"
-EOF
+# Deploy Backend
+cd backend
+npx serverless deploy --stage production
+
+# Save the API Gateway URL provided in the output
+API_URL="https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/production"
+
+# Deploy Worker
+cd ../worker
+npx serverless deploy --stage production
 ```
 
 ---
@@ -2135,11 +1503,6 @@ Add the following secrets:
 | `AWS_SECRET_ACCESS_KEY` | Your AWS secret key | AWS authentication |
 | `AWS_ACCOUNT_ID` | `123456789012` | Your AWS account ID |
 | `AWS_REGION` | `us-east-1` | AWS region |
-| `ECR_BACKEND_REPO` | Backend repo name | ECR repository |
-| `ECR_WORKER_REPO` | Worker repo name | ECR repository |
-| `ECS_CLUSTER` | Cluster name | ECS cluster |
-| `ECS_BACKEND_SERVICE` | Backend service name | ECS service |
-| `ECS_WORKER_SERVICE` | Worker service name | ECS service |
 | `S3_FRONTEND_BUCKET` | Frontend bucket name | S3 bucket |
 | `CLOUDFRONT_DIST_ID` | CloudFront ID | CloudFront distribution |
 
@@ -2147,11 +1510,6 @@ Add the following secrets:
 # Quick reference for your values:
 echo "AWS_ACCOUNT_ID: $AWS_ACCOUNT_ID"
 echo "AWS_REGION: $AWS_REGION"
-echo "ECR_BACKEND_REPO: $BACKEND_REPO_NAME"
-echo "ECR_WORKER_REPO: $WORKER_REPO_NAME"
-echo "ECS_CLUSTER: $CLUSTER_NAME"
-echo "ECS_BACKEND_SERVICE: $BACKEND_SERVICE_NAME"
-echo "ECS_WORKER_SERVICE: $WORKER_SERVICE_NAME"
 echo "S3_FRONTEND_BUCKET: $FRONTEND_BUCKET"
 echo "CLOUDFRONT_DIST_ID: $CF_DIST_ID"
 ```
@@ -2164,37 +1522,38 @@ Create directory for workflows:
 mkdir -p .github/workflows
 ```
 
-**Workflow 1: Backend CI/CD**
+**Workflow 1: Backend & Worker CI/CD**
 
 Create `.github/workflows/backend-deploy.yml`:
 
 ```yaml
-name: Deploy Backend
+name: Deploy Serverless Backend
 
 on:
   push:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'worker/**'
       - '.github/workflows/backend-deploy.yml'
   workflow_dispatch:
 
 env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: ${{ secrets.ECR_BACKEND_REPO }}
-  ECS_SERVICE: ${{ secrets.ECS_BACKEND_SERVICE }}
-  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
-  ECS_TASK_DEFINITION: fileflow-backend
-  CONTAINER_NAME: backend
 
 jobs:
   deploy:
-    name: Deploy Backend to ECS
+    name: Deploy Backend & Worker
     runs-on: ubuntu-latest
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -2203,137 +1562,26 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Install Serverless Framework
+        run: npm install -g serverless
 
-      - name: Build, tag, and push image to Amazon ECR
-        id: build-image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Install dependencies
+        run: |
+          cd backend && yarn install
+          cd ../worker && yarn install
+
+      - name: Deploy Backend
         run: |
           cd backend
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          npx serverless deploy --stage production
 
-      - name: Download current task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition $ECS_TASK_DEFINITION \
-            --query taskDefinition > task-definition.json
-
-      - name: Fill in the new image ID in the Amazon ECS task definition
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
-
-      - name: Deploy Amazon ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
-
-      - name: Deployment Summary
-        run: |
-          echo "✅ Backend deployed successfully!"
-          echo "🏷️  Image: ${{ steps.build-image.outputs.image }}"
-          echo "🔧 Service: ${{ env.ECS_SERVICE }}"
-          echo "📦 Cluster: ${{ env.ECS_CLUSTER }}"
-```
-
-**Workflow 2: Worker CI/CD**
-
-Create `.github/workflows/worker-deploy.yml`:
-
-```yaml
-name: Deploy Worker
-
-on:
-  push:
-    branches: [main]
-    paths:
-      - 'worker/**'
-      - '.github/workflows/worker-deploy.yml'
-  workflow_dispatch:
-
-env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: ${{ secrets.ECR_WORKER_REPO }}
-  ECS_SERVICE: ${{ secrets.ECS_WORKER_SERVICE }}
-  ECS_CLUSTER: ${{ secrets.ECS_CLUSTER }}
-  ECS_TASK_DEFINITION: fileflow-worker
-  CONTAINER_NAME: worker
-
-jobs:
-  deploy:
-    name: Deploy Worker to ECS
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build, tag, and push image to Amazon ECR
-        id: build-image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Deploy Worker
         run: |
           cd worker
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-      - name: Download current task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition $ECS_TASK_DEFINITION \
-            --query taskDefinition > task-definition.json
-
-      - name: Fill in the new image ID in the Amazon ECS task definition
-        id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image }}
-
-      - name: Deploy Amazon ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-        with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
+          npx serverless deploy --stage production
 
       - name: Deployment Summary
-        run: |
-          echo "✅ Worker deployed successfully!"
-          echo "🏷️  Image: ${{ steps.build-image.outputs.image }}"
-          echo "🔧 Service: ${{ env.ECS_SERVICE }}"
-          echo "📦 Cluster: ${{ env.ECS_CLUSTER }}"
+        run: echo "✅ Serverless resources deployed successfully!"
 ```
 
 **Workflow 3: Frontend CI/CD**
@@ -2449,15 +1697,8 @@ git push origin main
 **Step 3: Verify Deployment**
 
 ```bash
-# Check ECS service
-aws ecs describe-services \
-  --cluster $CLUSTER_NAME \
-  --services $BACKEND_SERVICE_NAME \
-  --region $AWS_REGION \
-  --query 'services[0].deployments'
-
 # Test API
-curl http://$ALB_DNS/health
+curl $API_URL/health
 ```
 
 ---
@@ -2466,9 +1707,8 @@ curl http://$ALB_DNS/health
 
 Would you like me to continue with:
 - 12. Monitoring & Logging Setup
-- 13. Blue/Green Deployment Setup  
-- 14. Security Best Practices
-- 15-18. Testing, Rollback, Cost Optimization, and Troubleshooting sections?
+- 13. Security Best Practices
+- 14-16. Testing, Cost Optimization, and Troubleshooting sections?
 
 
 ## 12. Monitoring & Logging Setup
@@ -2723,222 +1963,10 @@ aws iam put-role-policy \
   --policy-document file:///tmp/xray-policy.json
 ```
 
----
 
-## 13. Blue/Green Deployment Setup
 
-### 13.1 Create CodeDeploy Application
 
-**Step 1: Create IAM Role for CodeDeploy**
 
-```bash
-# Create trust policy
-cat > /tmp/codedeploy-trust-policy.json << 'EOF'
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Service": "codedeploy.amazonaws.com"
-      },
-      "Action": "sts:AssumeRole"
-    }
-  ]
-}
-EOF
-
-# Create role
-CODEDEPLOY_ROLE_NAME="${PROJECT_NAME}-codedeploy-role"
-
-aws iam create-role \
-  --role-name $CODEDEPLOY_ROLE_NAME \
-  --assume-role-policy-document file:///tmp/codedeploy-trust-policy.json \
-  --region $AWS_REGION
-
-# Attach AWS managed policy
-aws iam attach-role-policy \
-  --role-name $CODEDEPLOY_ROLE_NAME \
-  --policy-arn arn:aws:iam::aws:policy/AWSCodeDeployRoleForECS \
-  --region $AWS_REGION
-
-# Get role ARN
-CODEDEPLOY_ROLE_ARN=$(aws iam get-role \
-  --role-name $CODEDEPLOY_ROLE_NAME \
-  --query 'Role.Arn' \
-  --output text)
-
-echo "CodeDeploy Role ARN: $CODEDEPLOY_ROLE_ARN"
-```
-
-**Step 2: Create CodeDeploy Application**
-
-```bash
-# Create application
-CODEDEPLOY_APP_NAME="${PROJECT_NAME}-deploy"
-
-aws deploy create-application \
-  --application-name $CODEDEPLOY_APP_NAME \
-  --compute-platform ECS \
-  --region $AWS_REGION
-
-echo "CodeDeploy Application created: $CODEDEPLOY_APP_NAME"
-```
-
-**Step 3: Create Target Group for Blue/Green**
-
-We need a second target group for blue/green deployment:
-
-```bash
-# Create second target group (for green deployment)
-TG_GREEN_NAME="${PROJECT_NAME}-backend-tg-green"
-
-TG_GREEN_ARN=$(aws elbv2 create-target-group \
-  --name $TG_GREEN_NAME \
-  --protocol HTTP \
-  --port 3000 \
-  --vpc-id $VPC_ID \
-  --target-type ip \
-  --health-check-enabled \
-  --health-check-protocol HTTP \
-  --health-check-path /health \
-  --health-check-interval-seconds 30 \
-  --health-check-timeout-seconds 5 \
-  --healthy-threshold-count 2 \
-  --unhealthy-threshold-count 3 \
-  --matcher HttpCode=200 \
-  --tags "Key=Name,Value=${TG_GREEN_NAME}" \
-  --region $AWS_REGION \
-  --query 'TargetGroups[0].TargetGroupArn' \
-  --output text)
-
-echo "Green Target Group ARN: $TG_GREEN_ARN"
-```
-
-**Step 4: Create Deployment Group**
-
-```bash
-# Create deployment group with blue/green configuration
-DEPLOYMENT_GROUP_NAME="${PROJECT_NAME}-backend-dg"
-
-aws deploy create-deployment-group \
-  --application-name $CODEDEPLOY_APP_NAME \
-  --deployment-group-name $DEPLOYMENT_GROUP_NAME \
-  --service-role-arn $CODEDEPLOY_ROLE_ARN \
-  --deployment-config-name CodeDeployDefault.ECSAllAtOnce \
-  --ecs-services clusterName=$CLUSTER_NAME,serviceName=$BACKEND_SERVICE_NAME \
-  --load-balancer-info "targetGroupPairInfoList=[{targetGroups=[{name=${TG_NAME}},{name=${TG_GREEN_NAME}}],prodTrafficRoute={listenerArns=[${LISTENER_ARN}]}}]" \
-  --blue-green-deployment-configuration '{
-    "terminateBlueInstancesOnDeploymentSuccess": {
-      "action": "TERMINATE",
-      "terminationWaitTimeInMinutes": 5
-    },
-    "deploymentReadyOption": {
-      "actionOnTimeout": "CONTINUE_DEPLOYMENT"
-    }
-  }' \
-  --auto-rollback-configuration '{
-    "enabled": true,
-    "events": ["DEPLOYMENT_FAILURE", "DEPLOYMENT_STOP_ON_ALARM"]
-  }' \
-  --region $AWS_REGION
-
-echo "Deployment Group created: $DEPLOYMENT_GROUP_NAME"
-```
-
-### 13.2 Create AppSpec File
-
-Create `appspec.yaml` in the repository root:
-
-```yaml
-version: 0.0
-Resources:
-  - TargetService:
-      Type: AWS::ECS::Service
-      Properties:
-        TaskDefinition: "<TASK_DEFINITION>"
-        LoadBalancerInfo:
-          ContainerName: "backend"
-          ContainerPort: 3000
-        PlatformVersion: "LATEST"
-        NetworkConfiguration:
-          AwsvpcConfiguration:
-            Subnets:
-              - "PRIVATE_SUBNET_1"
-              - "PRIVATE_SUBNET_2"
-            SecurityGroups:
-              - "ECS_SG_ID"
-            AssignPublicIp: "DISABLED"
-Hooks:
-  - BeforeInstall: "LambdaFunctionToValidateBeforeInstall"
-  - AfterInstall: "LambdaFunctionToValidateAfterTraffic"
-  - AfterAllowTestTraffic: "LambdaFunctionToValidateAfterTestTrafficStarts"
-  - BeforeAllowTraffic: "LambdaFunctionToValidateBeforeTrafficShift"
-  - AfterAllowTraffic: "LambdaFunctionToValidateAfterTrafficShift"
-```
-
-### 13.3 Update GitHub Workflow for Blue/Green
-
-Update `.github/workflows/backend-deploy.yml` to use CodeDeploy:
-
-```yaml
-- name: Create CodeDeploy Deployment
-  run: |
-    # Register new task definition
-    TASK_DEF_ARN=$(aws ecs register-task-definition \
-      --cli-input-json file://task-definition.json \
-      --query 'taskDefinition.taskDefinitionArn' \
-      --output text)
-    
-    # Create appspec.json for CodeDeploy
-    cat > appspec.json << EOF
-    {
-      "version": 0.0,
-      "Resources": [{
-        "TargetService": {
-          "Type": "AWS::ECS::Service",
-          "Properties": {
-            "TaskDefinition": "${TASK_DEF_ARN}",
-            "LoadBalancerInfo": {
-              "ContainerName": "backend",
-              "ContainerPort": 3000
-            }
-          }
-        }
-      }]
-    }
-    EOF
-    
-    # Create deployment
-    aws deploy create-deployment \
-      --application-name ${{ env.CODEDEPLOY_APP_NAME }} \
-      --deployment-group-name ${{ env.DEPLOYMENT_GROUP_NAME }} \
-      --revision '{"revisionType": "AppSpecContent", "appSpecContent": {"content": "'"$(cat appspec.json)"'"}}' \
-      --region ${{ env.AWS_REGION }}
-```
-
-### 13.4 Test Blue/Green Deployment
-
-```bash
-# Trigger a deployment
-git add .
-git commit -m "test: blue/green deployment"
-git push origin main
-
-# Monitor deployment in CodeDeploy console or CLI
-aws deploy get-deployment \
-  --deployment-id <deployment-id> \
-  --region $AWS_REGION
-
-# Watch deployment status
-aws deploy list-deployments \
-  --application-name $CODEDEPLOY_APP_NAME \
-  --deployment-group-name $DEPLOYMENT_GROUP_NAME \
-  --include-only-statuses InProgress \
-  --region $AWS_REGION
-```
-
----
 
 ## 14. Security Best Practices
 
@@ -3063,7 +2091,7 @@ echo "VPC Flow Logs enabled"
 - ✅ CloudWatch alarms configured for security events
 - ✅ GuardDuty enabled for threat detection
 - ✅ All traffic uses HTTPS (with ACM certificates)
-- ✅ ECS tasks run in private subnets
+- ✅ Lambda functions run in private subnets with NAT gateway access (if needed) or VPC endpoints
 - ✅ Database not publicly accessible
 - ✅ Regular security patching via container image updates
 
@@ -3073,14 +2101,8 @@ echo "VPC Flow Logs enabled"
 
 ### 15.1 Health Check Tests
 
-```bash
-# Test ALB health
-curl -I http://$ALB_DNS/health
-
-# Expected: HTTP/1.1 200 OK
-
 # Test backend API
-curl http://$ALB_DNS/health
+curl $API_URL/health
 # Expected: {"status":"ok"}
 
 # Test frontend
@@ -3099,7 +2121,7 @@ npm install -g artillery
 # Create load test scenario
 cat > load-test.yml << EOF
 config:
-  target: "http://${ALB_DNS}"
+  target: "${API_URL}"
   phases:
     - duration: 60
       arrivalRate: 10
@@ -3135,70 +2157,20 @@ EOF
 artillery run load-test.yml
 ```
 
-### 15.3 Failover Testing
 
-```bash
-# Stop one ECS task to test auto-recovery
-TASK_ID=$(aws ecs list-tasks \
-  --cluster $CLUSTER_NAME \
-  --service-name $BACKEND_SERVICE_NAME \
-  --region $AWS_REGION \
-  --query 'taskArns[0]' \
-  --output text)
-
-aws ecs stop-task \
-  --cluster $CLUSTER_NAME \
-  --task $TASK_ID \
-  --reason "Testing auto-recovery" \
-  --region $AWS_REGION
-
-# Watch service recover
-aws ecs describe-services \
-  --cluster $CLUSTER_NAME \
-  --services $BACKEND_SERVICE_NAME \
-  --region $AWS_REGION \
-  --query 'services[0].events[0:5]'
-```
 
 ---
 
 ## 16. Rollback Procedures
 
-### 16.1 Rollback ECS Deployment
-
-**Option 1: Update service to previous task definition**
+### 16.1 Rollback Serverless Deployment
 
 ```bash
-# List recent task definitions
-aws ecs list-task-definitions \
-  --family-prefix ${PROJECT_NAME}-backend \
-  --sort DESC \
-  --max-items 5 \
-  --region $AWS_REGION
+# List previous deployments
+npx serverless deploy list
 
-# Rollback to previous version
-PREVIOUS_TASK_DEF="arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:task-definition/${PROJECT_NAME}-backend:X"
-
-aws ecs update-service \
-  --cluster $CLUSTER_NAME \
-  --service $BACKEND_SERVICE_NAME \
-  --task-definition $PREVIOUS_TASK_DEF \
-  --force-new-deployment \
-  --region $AWS_REGION
-
-echo "Rolling back to: $PREVIOUS_TASK_DEF"
-```
-
-**Option 2: Rollback CodeDeploy deployment**
-
-```bash
-# Stop current deployment and rollback
-DEPLOYMENT_ID="d-XXXXXXXXX"
-
-aws deploy stop-deployment \
-  --deployment-id $DEPLOYMENT_ID \
-  --auto-rollback-enabled \
-  --region $AWS_REGION
+# Rollback to specific timestamp
+npx serverless rollback --timestamp <timestamp_from_list>
 ```
 
 ### 16.2 Rollback Frontend Deployment
@@ -3248,43 +2220,13 @@ echo "Restoring database from snapshot (takes 10-15 minutes)"
 
 ## 17. Cost Optimization
 
-### 17.1 Use Fargate Spot for Non-Critical Workloads
+### 17.1 Leverage the AWS Free Tier
 
-```bash
-# Update worker service to use Fargate Spot
-aws ecs update-service \
-  --cluster $CLUSTER_NAME \
-  --service $WORKER_SERVICE_NAME \
-  --capacity-provider-strategy \
-    capacityProvider=FARGATE_SPOT,weight=100 \
-  --region $AWS_REGION
-
-echo "Worker service now using Fargate Spot (70% cost savings)"
-```
-
-### 17.2 Implement Auto-Scaling Schedule
-
-```bash
-# Scale down during off-hours
-aws application-autoscaling put-scheduled-action \
-  --service-namespace ecs \
-  --resource-id service/${CLUSTER_NAME}/${BACKEND_SERVICE_NAME} \
-  --scalable-dimension ecs:service:DesiredCount \
-  --scheduled-action-name scale-down-evening \
-  --schedule "cron(0 22 * * ? *)" \
-  --scalable-target-action MinCapacity=1,MaxCapacity=2 \
-  --region $AWS_REGION
-
-# Scale up during business hours
-aws application-autoscaling put-scheduled-action \
-  --service-namespace ecs \
-  --resource-id service/${CLUSTER_NAME}/${BACKEND_SERVICE_NAME} \
-  --scalable-dimension ecs:service:DesiredCount \
-  --scheduled-action-name scale-up-morning \
-  --schedule "cron(0 8 * * ? *)" \
-  --scalable-target-action MinCapacity=2,MaxCapacity=10 \
-  --region $AWS_REGION
-```
+As a heavily Serverless-based application, you are primed to use the following Free Tier capabilities:
+- **1 Million Lambda requests** per month
+- **400,000 GB-seconds** of compute time per month
+- **1M API Gateway requests** per month
+- Serverless enables **0 idle cost** when no users are accessing the service. Wait for load scaling to happen organically.
 
 ### 17.3 S3 Lifecycle Policies
 
@@ -3323,7 +2265,7 @@ aws budgets create-budget \
   --budget '{
     "BudgetName": "'"${PROJECT_NAME}-monthly-budget"'",
     "BudgetLimit": {
-      "Amount": "150",
+      "Amount": "5",
       "Unit": "USD"
     },
     "TimeUnit": "MONTHLY",
@@ -3346,7 +2288,7 @@ aws budgets create-budget \
     }
   ]'
 
-echo "Budget created: You'll be alerted at 80% of $150/month"
+echo "Budget created: You'll be alerted at 80% of $5/month"
 ```
 
 ---
@@ -3387,32 +2329,23 @@ aws ecr describe-images \
   --region $AWS_REGION
 ```
 
-### 18.2 ALB Health Checks Failing
+### 18.2 API Gateway Integration Fails
 
-**Symptoms:** Targets showing as unhealthy in ALB
+**Symptoms:** "Internal server error" from API Gateway
 
 **Solutions:**
 
 ```bash
-# 1. Check health check configuration
-aws elbv2 describe-target-health \
-  --target-group-arn $TG_ARN \
+# 1. Check if the backend Lambda exists
+aws lambda get-function \
+  --function-name ${PROJECT_NAME}-backend-production-api \
   --region $AWS_REGION
 
-# 2. Test health endpoint from within VPC
-# Use ECS Exec to access a running task
-aws ecs execute-command \
-  --cluster $CLUSTER_NAME \
-  --task <task-id> \
-  --container backend \
-  --interactive \
-  --command "/bin/sh"
+# 2. Check Lambda logs for syntax errors or missing modules
+aws logs tail /aws/lambda/${PROJECT_NAME}-backend-production-api --follow
 
-# Inside container:
-curl localhost:3000/health
-
-# 3. Check security group rules
-# Ensure ALB security group can reach ECS tasks on port 3000
+# 3. Ensure API Gateway has permission to invoke the Lambda
+# (Usually handled automatically by Serverless Framework)
 ```
 
 ### 18.3 Database Connection Issues
@@ -3433,16 +2366,11 @@ aws ec2 describe-security-group-rules \
   --filters "Name=group-id,Values=$RDS_SG_ID" \
   --region $AWS_REGION
 
-# 3. Test connection from ECS task
-aws ecs execute-command \
-  --cluster $CLUSTER_NAME \
-  --task <task-id> \
-  --container backend \
-  --interactive \
-  --command "/bin/sh"
-
-# Inside container:
-nc -zv $DB_ENDPOINT 5432
+# 3. Verify Lambda is connected to the right VPC/Subnets
+aws lambda get-function-configuration \
+  --function-name ${PROJECT_NAME}-backend-production-api \
+  --region $AWS_REGION \
+  --query 'VpcConfig'
 
 # 4. Verify connection string in Secrets Manager
 aws secretsmanager get-secret-value \
@@ -3497,10 +2425,9 @@ aws sqs get-queue-attributes \
 # 2. Check worker logs
 aws logs tail $WORKER_LOG_GROUP --follow
 
-# 3. Verify worker is running
-aws ecs list-tasks \
-  --cluster $CLUSTER_NAME \
-  --service-name $WORKER_SERVICE_NAME \
+# 3. Verify Lambda function configuration and event source mapping
+aws lambda list-event-source-mappings \
+  --function-name ${PROJECT_NAME}-worker-production-processor \
   --region $AWS_REGION
 
 # 4. Check IAM permissions for SQS
@@ -3532,12 +2459,16 @@ aws ce get-cost-and-usage \
 # 2. Check NAT Gateway data transfer (often expensive)
 # Consider VPC endpoints instead
 
-# 3. Review ECS task counts
-aws ecs describe-services \
-  --cluster $CLUSTER_NAME \
-  --services $BACKEND_SERVICE_NAME $WORKER_SERVICE_NAME \
-  --region $AWS_REGION \
-  --query 'services[].[serviceName,runningCount,desiredCount]'
+# 3. Review Lambda execution metrics
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/Lambda \
+  --metric-name Duration \
+  --dimensions Name=FunctionName,Value=${PROJECT_NAME}-backend-production-api \
+  --start-time $(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ) \
+  --end-time $(date -u +%Y-%m-%dT%H:%M:%SZ) \
+  --period 3600 \
+  --statistics Average \
+  --region $AWS_REGION
 
 # 4. Check CloudFront data transfer
 aws cloudfront get-distribution \
@@ -3545,10 +2476,9 @@ aws cloudfront get-distribution \
   --query 'Distribution.DistributionConfig.PriceClass'
 
 # 5. Review unused resources
-# - Elastic IPs not attached to instances
-# - Idle load balancers
+# - Unused ElastiCache clusters
+# - Idle RDS instances (Consider pausing them)
 # - Old EBS snapshots
-# - Unused ECR images
 ```
 
 ---
@@ -3563,53 +2493,38 @@ source ~/.aws-fileflow-env
 source ~/fileflow-network-config.sh
 source ~/fileflow-data-config.sh
 source ~/fileflow-storage-config.sh
-source ~/fileflow-ecr-config.sh
-source ~/fileflow-alb-config.sh
-source ~/fileflow-ecs-config.sh
 source ~/fileflow-cloudfront-config.sh
 ```
 
 ### Useful Commands Cheat Sheet
 
 ```bash
-# View all running ECS tasks
-aws ecs list-tasks --cluster $CLUSTER_NAME --region $AWS_REGION
+# View recent Lambda invocations
+aws lambda list-functions --region $AWS_REGION
 
 # Tail backend logs
-aws logs tail $BACKEND_LOG_GROUP --follow --region $AWS_REGION
+aws logs tail /aws/lambda/${PROJECT_NAME}-backend-production-api --follow --region $AWS_REGION
 
-# Check ALB targets health
-aws elbv2 describe-target-health --target-group-arn $TG_ARN --region $AWS_REGION
-
-# List recent deployments
-aws deploy list-deployments --application-name $CODEDEPLOY_APP_NAME --region $AWS_REGION
+# Deploy Serverless Backend (from the backend directory)
+npx serverless deploy --stage production
 
 # Get current costs
 aws ce get-cost-and-usage --time-period Start=$(date -d '1 month ago' +%Y-%m-%d),End=$(date +%Y-%m-%d) --granularity MONTHLY --metrics BlendedCost
 
-# SSH into ECS task (with ECS Exec enabled)
-aws ecs execute-command --cluster $CLUSTER_NAME --task <task-id> --container backend --interactive --command "/bin/sh"
-
 # Invalidate CloudFront
 aws cloudfront create-invalidation --distribution-id $CF_DIST_ID --paths "/*"
 
-# Force new ECS deployment
-aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE_NAME --force-new-deployment --region $AWS_REGION
+# Rollback Serverless Deployment (List previous deployments)
+npx serverless deploy list
 ```
 
 ### Architecture Decision Records
 
-**Why Fargate over EC2?**
-- No server management
-- Automatic scaling
-- Pay only for what you use
-- Easier to maintain
-
-**Why ALB over NLB?**
-- HTTP/HTTPS routing
-- Path-based routing
-- Integration with CodeDeploy
-- Content-based routing
+**Why Serverless (Lambda/API Gateway)?**
+- No infrastructure management
+- True automatic scaling down to zero
+- Maximum cost efficiency (AWS Free Tier)
+- Native integration with AWS ecosystem
 
 **Why CloudFront over S3 alone?**
 - Global CDN
@@ -3629,13 +2544,12 @@ aws ecs update-service --cluster $CLUSTER_NAME --service $BACKEND_SERVICE_NAME -
 
 You've now deployed a production-ready, scalable application on AWS with:
 
-✅ **Zero-downtime deployments** via Blue/Green strategy  
-✅ **Horizontal scaling** with ECS Fargate  
+✅ **Zero-downtime deployments** via Serverless Framework  
+✅ **Horizontal auto-scaling to zero** with AWS Lambda & API Gateway  
 ✅ **Global distribution** via CloudFront  
 ✅ **Automated CI/CD** with GitHub Actions  
-✅ **Full observability** with CloudWatch  
-✅ **High availability** across multiple AZs  
-✅ **Security best practices** with IAM, Security Groups, and encryption  
+✅ **Seamless operations** with $0 idle cost in the AWS Free Tier
+✅ **Security best practices** with IAM and AWS Secrets Manager  
 
 ### Next Steps
 

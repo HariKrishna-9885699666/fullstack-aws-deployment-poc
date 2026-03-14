@@ -6,9 +6,9 @@ A production-ready proof-of-concept demonstrating scalable AWS architecture with
 
 FileFlow is a document/task management application showcasing:
 - **Frontend**: React + Vite (S3 + CloudFront ready)
-- **Backend**: NestJS REST API (ECS Fargate ready)
-- **Worker**: Async SQS processor (ECS Fargate ready)
-- **Infrastructure**: RDS PostgreSQL, ElastiCache Redis, S3, SQS
+- **Backend**: NestJS REST API (AWS Lambda + API Gateway ready)
+- **Worker**: Async SQS processor (AWS Lambda ready)
+- **Infrastructure**: RDS PostgreSQL, ElastiCache Redis, S3, SQS (Free Tier)
 - **CI/CD**: Blue/green deployments via CodeDeploy
 
 ## 🏗️ Architecture
@@ -274,6 +274,7 @@ docker build -t fileflow-worker:latest .
 - **bcrypt** for password hashing
 - **class-validator** for DTO validation
 - **AWS SDK v3** for S3 and SQS
+- **Serverless Framework** for AWS Lambda deployment
 - **Helmet** for security headers
 - **Swagger** for API documentation
 
@@ -332,15 +333,15 @@ docker build -t fileflow-worker:latest .
 - **Cost**: Pay per request, no idle server costs
 
 #### Backend API
-- **ECS Fargate**: Containerized, auto-scaling compute
-- **ALB**: Load balancing with health checks
-- **Deployment**: Blue/green via CodeDeploy (zero downtime)
-- **Scaling**: Horizontal scaling based on CPU/memory metrics
-- **Rollback**: Instant rollback to previous task definition
+- **AWS Lambda**: Serverless, auto-scaling compute
+- **API Gateway**: HTTP routing and rate limiting
+- **Deployment**: Serverless Framework (`npx serverless deploy`)
+- **Scaling**: Automatic horizontal scaling up to 1000 concurrent executions
+- **Rollback**: Instant rollback via Serverless Framework or AWS Console
 
 #### Async Processing
 - **SQS Queue**: Decouples file processing from API
-- **Worker Service**: Dedicated ECS tasks for background jobs
+- **Worker Service**: Dedicated AWS Lambda function triggered by SQS events
 - **Resilience**: Messages retry on failure, DLQ for poison messages
 - **Performance**: API responds immediately, processing happens async
 
@@ -367,8 +368,8 @@ docker build -t fileflow-worker:latest .
 2. **Scalability**: Services scale independently based on demand
 3. **Reliability**: Queue-based processing handles spikes and failures
 4. **Performance**: Redis caching and CDN reduce latency
-5. **Maintainability**: Docker containers ensure consistent environments
-6. **Cost Efficiency**: Pay only for resources used (no idle servers)
+5. **Maintainability**: Serverless framework ensures consistent environments
+6. **Cost Efficiency**: $0/month on AWS Free Tier (pay only for execution time)
 7. **Observability**: CloudWatch logs and metrics across all services
 
 ## 🧪 Testing & Verification
@@ -546,11 +547,10 @@ Based on local testing with LocalStack:
 4. LocalStack for AWS service testing
 
 ### Production Deployment
-1. **Build**: Docker images for backend and worker
-2. **Push**: Images to Amazon ECR
-3. **Deploy Backend**: ECS Fargate with blue/green via CodeDeploy
-4. **Deploy Worker**: ECS Fargate separate service
-5. **Deploy Frontend**: Build + upload to S3, invalidate CloudFront
+1. **Serverless Config**: Define `serverless.yml` for backend and worker
+2. **Deploy Backend**: `npx serverless deploy` to AWS Lambda & API Gateway
+3. **Deploy Worker**: `npx serverless deploy` for SQS Event Lambda
+4. **Deploy Frontend**: Build + upload to S3, invalidate CloudFront
 6. **Monitor**: CloudWatch logs, metrics, and alarms
 
 ## 📈 Future Enhancements

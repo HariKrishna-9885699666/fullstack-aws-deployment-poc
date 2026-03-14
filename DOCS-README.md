@@ -152,10 +152,10 @@ open QUICK-REFERENCE.md
 - 🔒 **HTTPS** with automatic cert management
 
 ### Backend
-- 🐳 **ECS Fargate** for containerized API
-- ⚖️ **Application Load Balancer** for traffic distribution
-- 📈 **Auto-scaling** (2-10 tasks based on load)
-- 💚 **Zero-downtime** Blue/Green deployments
+- ⚡ **AWS Lambda** for serverless compute
+- 🚪 **API Gateway** for REST API endpoints
+- 📈 **Auto-scaling** (Scale to zero, built-in concurrency)
+- 💚 **Serverless Framework** for automated deployments
 
 ### Data Layer
 - 🗄️ **RDS PostgreSQL** (Multi-AZ)
@@ -165,28 +165,26 @@ open QUICK-REFERENCE.md
 
 ### DevOps
 - 🔄 **GitHub Actions** CI/CD
-- 📦 **ECR** container registry
-- 🚦 **CodeDeploy** for deployments
+- ⚡ **Serverless Framework** for deployments
 - 📊 **CloudWatch** for monitoring
 
 ---
 
 ## 💰 Cost Estimate
 
-**Total: ~$124/month for production-like setup**
+**Total: ~$0/month (Using AWS Free Tier)**
 
 | Service | Monthly Cost | Notes |
 |---------|--------------|-------|
-| ECS Fargate (API) | ~$15 | 2 tasks × 0.25vCPU, 0.5GB |
-| ECS Fargate (Worker) | ~$7 | 1 task × 0.25vCPU, 0.5GB |
-| RDS PostgreSQL | ~$15 | db.t3.micro, Multi-AZ |
-| ElastiCache Redis | ~$12 | cache.t3.micro |
-| ALB | ~$20 | Single load balancer |
-| NAT Gateway | ~$35 | 1 NAT + data transfer |
-| S3 + CloudFront | ~$15 | Storage + CDN |
-| CloudWatch | ~$5 | Logs + metrics |
+| AWS Lambda | $0 | 1 Million free requests/month |
+| API Gateway | $0 | 1 Million free requests/month |
+| RDS PostgreSQL | $0 | db.t3.micro (Free Tier eligible) |
+| ElastiCache Redis | $0 | cache.t4g.micro (Free Tier eligible) |
+| SQS | $0 | 1 Million free requests/month |
+| S3 + CloudFront | $0 | 5GB Storage + 1TB Data Transfer Out |
+| CloudWatch | $0 | 10 Custom Metrics, 5GB Logs |
 
-**💡 Optimization:** Can reduce to ~$50/month for dev environments (see Section 17)
+**💡 Optimization:** Serverless scales to zero natively, meaning idle environments cost absolutely nothing. This architecture is perfect for side projects and proofs of concept.
 
 ---
 
@@ -194,17 +192,16 @@ open QUICK-REFERENCE.md
 
 ```
 Users → CloudFront → S3 (React SPA)
-Users → ALB → ECS Fargate (API) → RDS + Redis
-        ↓
-      SQS Queue → ECS Fargate (Worker) → S3 (Files)
+Users → API Gateway → Lambda (Backend) → RDS + Redis
+            ↓
+          SQS Queue → Lambda (Worker) → S3 (Files)
 ```
 
 **Key Features:**
-- 🔄 **Horizontal Scaling**: API scales from 2-10 tasks automatically
-- 💚 **Zero Downtime**: Blue/Green deployments with automatic rollback
-- 🔒 **Secure**: Private subnets, encrypted data, least-privilege IAM
-- 📊 **Observable**: Full CloudWatch monitoring and alerting
-- 💵 **Cost-Effective**: Right-sized instances with auto-scaling
+- 🔄 **Horizontal Auto-Scaling**: Scales from 0 to thousands of concurrent requests automatically.
+- 💵 **Cost-Effective**: $0 idle cost natively leveraging the AWS Free Tier.
+- 🔒 **Secure**: Private VPC connections, strict IAM roles, encrypted data.
+- 📊 **Observable**: Full CloudWatch logging and metrics.
 
 ---
 
@@ -248,22 +245,18 @@ Before starting, ensure you have:
 After completing this guide, you will:
 
 - ✅ Understand production AWS architecture patterns
-- ✅ Deploy containerized applications on ECS Fargate
-- ✅ Implement zero-downtime Blue/Green deployments
-- ✅ Configure auto-scaling and load balancing
+- ✅ Deploy Serverless applications using the Serverless Framework
+- ✅ Configure API Gateway and AWS Lambda
 - ✅ Set up comprehensive monitoring and alerting
-- ✅ Implement security best practices
-- ✅ Optimize costs for production workloads
-- ✅ Troubleshoot common deployment issues
+- ✅ Implement security best practices with IAM
+- ✅ Optimize costs for $0/month operations
 - ✅ Implement CI/CD pipelines with GitHub Actions
-- ✅ Manage infrastructure as code patterns
 
 **Resume-Ready Skills:**
-- AWS ECS Fargate, RDS, ElastiCache, S3, CloudFront, ALB
-- Infrastructure automation and deployment
+- AWS Lambda, API Gateway, RDS, ElastiCache, S3, CloudFront
+- Serverless architecture and deployment
 - DevOps CI/CD pipelines
-- Production monitoring and observability
-- Cost optimization strategies
+- Cost optimization (AWS Free Tier execution)
 - Security best practices implementation
 
 ---
@@ -336,13 +329,13 @@ This guide implements:
 ## 📈 Scaling Considerations
 
 **Current Setup:**
-- Backend: 2-10 tasks (auto-scaling)
-- Worker: 1-5 tasks (auto-scaling)
-- Database: Single instance (Multi-AZ)
-- Cache: Single node
+- Backend: AWS Lambda (API)
+- Worker: AWS Lambda (SQS processor)
+- Database: Single RDS instance (Free Tier)
+- Cache: Single Redis node (Free Tier)
 
 **To Scale Further:**
-- Increase ECS task limits (10 → 50+)
+- Request AWS quota increases for concurrent Lambda executions
 - Use RDS Read Replicas
 - Add Redis cluster mode
 - Multiple worker queues

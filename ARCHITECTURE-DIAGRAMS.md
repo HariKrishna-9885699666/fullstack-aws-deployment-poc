@@ -1,6 +1,6 @@
-# FileFlow POC - AWS Architecture Diagram
+# FileFlow POC - AWS Serverless Architecture Diagram
 
-## High-Level Architecture
+## High-Level Serverless Architecture (AWS Free Tier)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -12,12 +12,13 @@
                  │ HTTPS                           │ HTTPS
                  ▼                                 ▼
     ┌────────────────────────┐        ┌───────────────────────────┐
-    │   Amazon CloudFront    │        │      Amazon Route 53      │
-    │   (CDN Distribution)   │        │     (DNS - Optional)      │
-    │                        │        └───────────────────────────┘
-    │  - Global edge caching │
-    │  - HTTPS termination   │
-    │  - DDoS protection     │
+     │   Amazon CloudFront    │        │      Amazon Route 53      │
+     │   (CDN Distribution, Free Tier)   │        │     (DNS - Optional)      │
+     │                        │        └───────────────────────────┘
+     │  - Global edge caching │
+     │  - HTTPS termination   │
+     │  - DDoS protection     │
+     │  - Zero cost (Free Tier) │
     └────────────┬───────────┘
                  │
                  │ Origin request
@@ -33,46 +34,32 @@
 
 
                                      ┌─────────────────────────┐
-                                     │  Application Load       │
-                                     │  Balancer (ALB)         │◄─── HTTP/HTTPS
+                                     │  Amazon API Gateway     │
+                                     │  (REST API)             │◄─── HTTP/HTTPS
                                      │                         │     from users
-                                     │  - Health checks        │
-                                     │  - SSL termination      │
-                                     │  - Path routing         │
+                                     │  - Request routing      │
+                                     │  - Rate limiting        │
+                                     │  - Auth integration     │
                                      └────────┬────────────────┘
                                               │
-                                              │ Port 3000
+                                              │ Trigger
                                               ▼
 ┌───────────────────────────────────────────────────────────────────────────┐
 │                                                                           │
 │                          Amazon VPC (10.0.0.0/16)                         │
 │                                                                           │
 │  ┌────────────────────────────────────────────────────────────────────┐  │
-│  │                    Public Subnets (2 AZs)                          │  │
-│  │                                                                    │  │
-│  │  ┌──────────────────┐               ┌──────────────────┐          │  │
-│  │  │  Public Subnet 1 │               │  Public Subnet 2 │          │  │
-│  │  │  (10.0.1.0/24)   │               │  (10.0.2.0/24)   │          │  │
-│  │  │                  │               │                  │          │  │
-│  │  │  - NAT Gateway   │               │  - ALB instances │          │  │
-│  │  └──────────────────┘               └──────────────────┘          │  │
-│  └────────────────────────────────────────────────────────────────────┘  │
-│                                                                           │
-│  ┌────────────────────────────────────────────────────────────────────┐  │
 │  │                   Private Subnets (2 AZs)                          │  │
 │  │                                                                    │  │
 │  │  ┌─────────────────────────────────────────────────────────────┐  │  │
-│  │  │           ECS Fargate Cluster                               │  │  │
+│  │  │             AWS Lambda Functions                            │  │  │
 │  │  │                                                             │  │  │
 │  │  │   ┌───────────────────┐      ┌───────────────────┐         │  │  │
-│  │  │   │  Backend Service  │      │  Worker Service   │         │  │  │
+│  │  │   │  Backend Lambda   │      │  Worker Lambda    │         │  │  │
 │  │  │   │                   │      │                   │         │  │  │
-│  │  │   │  ┌─────┐ ┌─────┐ │      │  ┌─────┐          │         │  │  │
-│  │  │   │  │Task1│ │Task2│ │      │  │Task1│          │         │  │  │
-│  │  │   │  └─────┘ └─────┘ │      │  └─────┘          │         │  │  │
-│  │  │   │                   │      │                   │         │  │  │
-│  │  │   │  Auto-scaling:    │      │  Processes SQS    │         │  │  │
-│  │  │   │  Min: 2, Max: 10  │      │  messages         │         │  │  │
+│  │  │   │  Auto-scaling:    │      │  Event-driven:    │         │  │  │
+│  │  │   │  0 to thousands   │      │  Processes SQS    │         │  │  │
+│  │  │   │  concurrent       │      │  messages         │         │  │  │
 │  │  │   └───────────────────┘      └───────────────────┘         │  │  │
 │  │  └─────────────────────────────────────────────────────────────┘  │  │
 │  │                                                                    │  │
@@ -80,7 +67,7 @@
 │  │  │ Private Subnet 1 │               │ Private Subnet 2 │          │  │
 │  │  │ (10.0.11.0/24)   │               │ (10.0.12.0/24)   │          │  │
 │  │  │                  │               │                  │          │  │
-│  │  │ - ECS Tasks      │               │ - ECS Tasks      │          │  │
+│  │  │ - Lambda ENIs    │               │ - Lambda ENIs    │          │  │
 │  │  │ - RDS Primary    │               │ - RDS Standby    │          │  │
 │  │  │ - Redis Node     │               │                  │          │  │
 │  │  └──────────────────┘               └──────────────────┘          │  │
@@ -143,11 +130,11 @@
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-## Container & Deployment Architecture
+## Serverless & Deployment Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                    Container & CI/CD Pipeline                        │
+│                    Serverless CI/CD Pipeline (Blue/Green, Free Tier) │
 │                                                                      │
 │  ┌─────────────┐                                                     │
 │  │   GitHub    │                                                     │
@@ -162,43 +149,29 @@
 │  ┌─────────────────────────────────────────────────────────┐        │
 │  │          GitHub Actions Workflows                       │        │
 │  │                                                         │        │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │        │
-│  │  │   Backend    │  │   Worker     │  │   Frontend   │  │        │
-│  │  │   CI/CD      │  │   CI/CD      │  │   CI/CD      │  │        │
-│  │  │              │  │              │  │              │  │        │
-│  │  │ 1. Build     │  │ 1. Build     │  │ 1. Install   │  │        │
-│  │  │ 2. Test      │  │ 2. Test      │  │ 2. Build     │  │        │
-│  │  │ 3. Push ECR  │  │ 3. Push ECR  │  │ 3. S3 Sync   │  │        │
-│  │  │ 4. Deploy    │  │ 4. Deploy    │  │ 4. Invalidate│  │        │
-│  │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │        │
-│  └─────────┼──────────────────┼──────────────────┼──────────┘        │
-│            │                  │                  │                   │
-│            ▼                  ▼                  ▼                   │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐     │
-│  │  Amazon ECR     │  │  Amazon ECR     │  │  Amazon S3      │     │
-│  │  (Backend Repo) │  │  (Worker Repo)  │  │  (Frontend)     │     │
-│  │                 │  │                 │  │                 │     │
-│  │  - Auto scan    │  │  - Auto scan    │  │  + CloudFront   │     │
-│  │  - Lifecycle    │  │  - Lifecycle    │  │    invalidation │     │
-│  └────────┬────────┘  └────────┬────────┘  └─────────────────┘     │
-│           │                    │                                    │
-│           └──────────┬─────────┘                                    │
-│                      │                                              │
-│                      ▼                                              │
+│  │  ┌──────────────┐                 ┌──────────────┐     │        │
+│  │  │ Serverless   │                 │   Frontend   │     │        │
+│  │  │ CI/CD        │                 │   CI/CD      │     │        │
+│  │  │ (Blue/Green) │                 │ (Blue/Green) │     │        │
+│  │  │ 1. Setup     │                 │ 1. Install   │     │        │
+│  │  │ 2. Install   │                 │ 2. Build     │     │        │
+│  │  │ 3. Run deploy│                 │ 3. S3 Sync   │     │        │
+│  │  │              │                 │ 4. Invalidate│     │        │
+│  │  └──────┬───────┘                 └──────┬───────┘     │        │
+│  └─────────┼────────────────────────────────┼─────────────┘        │
+│            │                                │                      │
+│            ▼                                ▼                      │
+│  ┌─────────────────┐               ┌─────────────────┐             │
+│  │ Serverless      │               │  Amazon S3      │             │
+│  │ Framework       │               │  (Frontend, Free Tier) │             │
+│  │ (AWS Lambda,    │               │  + CloudFront   │             │
+│  │ API Gateway, Free Tier) │               │    invalidate      │             │
+│  │                 │               │                 │             │
+│  └────────┬────────┘               └─────────────────┘             │
+│           │                                                        │
+│           ▼                                                        │
 │  ┌──────────────────────────────────────────────────────┐          │
-│  │          AWS CodeDeploy (Blue/Green)                 │          │
-│  │                                                      │          │
-│  │  Phase 1: Deploy new task definition (Green)        │          │
-│  │  Phase 2: Route test traffic                        │          │
-│  │  Phase 3: Health check validation                   │          │
-│  │  Phase 4: Shift 100% traffic to Green               │          │
-│  │  Phase 5: Terminate Blue tasks                      │          │
-│  │  Phase 6: Auto-rollback on failure                  │          │
-│  └──────────────────────────────────────────────────────┘          │
-│                      │                                              │
-│                      ▼                                              │
-│  ┌──────────────────────────────────────────────────────┐          │
-│  │         ECS Fargate Services (Updated)               │          │
+│  │          AWS Lambda (Backend & Worker, Free Tier)    │          │
 │  └──────────────────────────────────────────────────────┘          │
 │                                                                      │
 └──────────────────────────────────────────────────────────────────────┘
@@ -216,11 +189,11 @@ CloudFront CDN ──────► React App
                           │
                           │ 2. POST /auth/login
                           ▼
-                    Application Load Balancer
+                    API Gateway
                           │
                           │ 3. Forward to backend
                           ▼
-                    ECS Backend Task
+                    Backend Lambda
                           │
                           │ 4. Verify credentials
                           ▼
@@ -241,7 +214,7 @@ User Browser
      │
      │ 1. Request upload URL
      ▼
-ALB ──────► Backend API
+API Gateway ──────► Backend Lambda
                 │
                 │ 2. Generate pre-signed S3 URL
                 ▼
@@ -257,16 +230,16 @@ ALB ──────► Backend API
                 │
                 │ 5. Notify backend of completion
                 ▼
-           Backend API
+           Backend Lambda
                 │
                 ├─► 6a. Update record in RDS
                 │        (status: PENDING)
                 │
                 └─► 6b. Send message to SQS
                          │
-                         │ 7. Worker polls SQS
+                         │ 7. Trigger SQS event
                          ▼
-                    Worker ECS Task
+                    Worker Lambda
                          │
                          │ 8. Process file
                          │    - Extract metadata
@@ -282,7 +255,7 @@ User Browser
      │
      │ 1. GET /dashboard/summary
      ▼
-ALB ──────► Backend API
+API Gateway ──────► Backend Lambda
                 │
                 │ 2. Check cache
                 ▼
@@ -298,7 +271,7 @@ ALB ──────► Backend API
                          │
                          │ 4. Aggregate data
                          ▼
-                    Backend API
+                    Backend Lambda
                          │
                          ├─► 5a. Store in cache (TTL: 60s)
                          │
@@ -341,8 +314,8 @@ ALB ──────► Backend API
 │  Layer 4: Access Control                                        │
 │  ┌────────────────────────────────────────────────────────┐     │
 │  │ - IAM roles (least privilege)                          │     │
-│  │ - Task execution role                                  │     │
-│  │ - Task role (application permissions)                  │     │
+│  │ - Lambda execution role                                │     │
+│  │ - API Gateway Resource Policies                        │     │
 │  │ - S3 bucket policies                                   │     │
 │  │ - CloudFront OAI                                       │     │
 │  └────────────────────────────────────────────────────────┘     │
@@ -352,7 +325,7 @@ ALB ──────► Backend API
 │  │ - AWS GuardDuty (threat detection)                     │     │
 │  │ - CloudWatch Logs & Metrics                            │     │
 │  │ - CloudWatch Alarms                                    │     │
-│  │ - Access logging (ALB, S3, CloudFront)                 │     │
+│  │ - Access logging (API Gateway, S3, CloudFront)         │     │
 │  │ - AWS Config (compliance)                              │     │
 │  └────────────────────────────────────────────────────────┘     │
 │                                                                  │
@@ -368,10 +341,10 @@ ALB ──────► Backend API
 │  ┌────────────────────────────────────────────────────────┐     │
 │  │                    Log Groups                          │     │
 │  │                                                        │     │
-│  │  /ecs/fileflow-backend     ──► API logs               │     │
-│  │  /ecs/fileflow-worker      ──► Worker logs            │     │
+│  │  /aws/lambda/fileflow*     ──► API logs               │     │
+│  │  /aws/lambda/fileflow*     ──► Worker logs            │     │
 │  │  /aws/vpc/fileflow         ──► VPC Flow Logs          │     │
-│  │  /aws/lambda/*             ──► Lambda logs (optional)  │     │
+│  │  /aws/apigateway/*         ──► Gateway logs            │     │
 │  └────────────────────────────────────────────────────────┘     │
 │                          │                                       │
 │                          ▼                                       │
@@ -416,36 +389,32 @@ ALB ──────► Backend API
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-## Cost Breakdown by Service
+## Cost Breakdown by Service (AWS Free Tier)
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│              Monthly Cost Estimate (~$124/month)                 │
+│              Monthly Cost Estimate ($0/month, Free Tier)         │
 │                                                                  │
 │  ┌─────────────────────┬────────────┬──────────────────────┐     │
 │  │ Service             │ Monthly $  │ Configuration        │     │
 │  ├─────────────────────┼────────────┼──────────────────────┤     │
-│  │ ECS Fargate (API)   │   ~$15     │ 2×0.25vCPU, 0.5GB   │     │
-│  │ ECS Fargate (Worker)│   ~$7      │ 1×0.25vCPU, 0.5GB   │     │
-│  │ RDS PostgreSQL      │   ~$15     │ db.t3.micro         │     │
-│  │ ElastiCache Redis   │   ~$12     │ cache.t3.micro      │     │
-│  │ ALB                 │   ~$20     │ 1 ALB               │     │
-│  │ NAT Gateway         │   ~$35     │ 1 NAT + data        │     │
-│  │ S3 Storage          │   ~$5      │ <100GB + requests   │     │
-│  │ CloudFront          │   ~$10     │ <1TB transfer       │     │
-│  │ CloudWatch          │   ~$5      │ Logs + metrics      │     │
-│  │ SQS                 │   Free     │ <1M requests        │     │
-│  │ ECR                 │   Free     │ <500MB storage      │     │
+│  │ AWS Lambda (API)    │   $0       │ Free Tier (<1M req)  │     │
+│  │ AWS Lambda (Worker) │   $0       │ Free Tier (<1M req)  │     │
+│  │ RDS PostgreSQL      │   $0       │ Free Tier db.t3.micro│     │
+│  │ ElastiCache Redis   │   $0       │ Free Tier t4g.micro  │     │
+│  │ API Gateway         │   $0       │ Free Tier (<1M req)  │     │
+│  │ S3 Storage          │   $0       │ Free Tier (<5GB)     │     │
+│  │ CloudFront          │   $0       │ Free Tier (<1TB)     │     │
+│  │ CloudWatch          │   $0       │ Free Tier (<5GB logs)│     │
+│  │ SQS                 │   $0       │ Free Tier (<1M req)  │     │
 │  ├─────────────────────┼────────────┼──────────────────────┤     │
-│  │ TOTAL               │   ~$124    │                      │     │
+│  │ TOTAL               │   $0       │                      │     │
 │  └─────────────────────┴────────────┴──────────────────────┘     │
 │                                                                  │
 │  💡 Cost Optimization Tips:                                      │
-│  • Use Fargate Spot for worker (70% savings)                     │
-│  • Remove NAT Gateway in dev (use VPC endpoints)                 │
-│  • Enable S3 Intelligent Tiering                                 │
-│  • Use CloudWatch log retention policies                         │
-│  • Schedule scale-down during off-hours                          │
+│  • Lambda scales natively to zero, $0 idle cost                  │
+│  • Limit retention on CloudWatch logs to 1-3 days to save GBs    │
+│  • All services are Free Tier eligible, so total AWS cost is $0  │
 │                                                                  │
 └──────────────────────────────────────────────────────────────────┘
 ```

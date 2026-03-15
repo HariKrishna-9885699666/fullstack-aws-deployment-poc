@@ -1,8 +1,8 @@
-# FileFlow POC - Complete AWS Infrastructure & CI/CD Deployment Guide
+# FileFlow POC - Complete AWS Serverless Infrastructure & CI/CD Deployment Guide (Free Tier)
 
 **Version:** 1.0  
 **Last Updated:** March 2026  
-**Purpose:** Step-by-step guide to deploy FileFlow application on AWS with production-grade infrastructure and CI/CD pipeline
+**Purpose:** Step-by-step guide to deploy FileFlow application on AWS with fully serverless, production-grade infrastructure, blue/green CI/CD pipeline, and zero AWS cost (Free Tier)
 
 ---
 
@@ -33,31 +33,36 @@
 
 ### 1.1 Architecture Summary
 
-This guide will help you deploy a full-stack application with:
+This guide will help you deploy a full-stack, fully serverless application with:
 
 **Frontend:**
-- React SPA hosted on S3
-- Distributed globally via CloudFront CDN
+- React SPA hosted on S3 (Free Tier)
+- Distributed globally via CloudFront CDN (Free Tier)
 - HTTPS enabled with ACM certificates
 
 **Backend:**
-- NestJS API running on AWS Lambda wrapper
-- Amazon API Gateway for traffic distribution
-- Auto-scaling up to 1000 concurrent executions
+- NestJS API running on AWS Lambda (Free Tier)
+- Amazon API Gateway for traffic distribution (Free Tier)
+- Auto-scaling up to 1000 concurrent executions (Free Tier limits)
 - Simple deployments via Serverless Framework
 
 **Worker:**
-- Asynchronous processing service via AWS Lambda
-- Triggered directly by SQS queue events
-- Updates processing status in RDS
+- Asynchronous processing service via AWS Lambda (Free Tier)
+- Triggered directly by SQS queue events (Free Tier)
+- Updates processing status in RDS (Free Tier)
 
 **Data Layer:**
-- RDS PostgreSQL for relational data (Free Tier eligible)
-- ElastiCache Redis for caching (Free Tier eligible)
-- S3 for file uploads
-- SQS for async job queue
+- RDS PostgreSQL for relational data (Free Tier)
+- ElastiCache Redis for caching (Free Tier)
+- S3 for file uploads (Free Tier)
+- SQS for async job queue (Free Tier)
 
 **CI/CD:**
+- Blue/Green deployments via CodeDeploy (zero-downtime)
+- GitHub Actions for automation
+
+**Cost:**
+- All services run within AWS Free Tier limits ($0/month)
 - GitHub Actions for automation
 - Serverless Framework for zero-downtime deployments
 - CloudWatch for monitoring and logging
@@ -1963,10 +1968,68 @@ aws iam put-role-policy \
   --policy-document file:///tmp/xray-policy.json
 ```
 
+---
 
+## 13. Blue/Green Deployment Setup (Serverless)
 
+### 13.1 Understanding the Pattern
 
+In a Serverless architecture, Blue/Green (or Canary) deployments ensure zero-downtime and safe rollouts. 
+Instead of spinning up new EC2/ECS instances, AWS leverages **Lambda Aliases** and **CodeDeploy**:
+1. A new version of the Lambda function is deployed.
+2. An alias (e.g., `production`) initially points 100% of traffic to the old version (Blue).
+3. CodeDeploy gradually shifts traffic (e.g., 10% per minute) to the new version (Green).
+4. If CloudWatch Alarms trigger (e.g., high 5xx errors), the deployment automatically rolls back.
 
+### 13.2 Configure Serverless Plugin
+
+To enable this natively, we use the `serverless-plugin-canary-deployments` plugin.
+
+**Step 1: Install the plugin**
+```bash
+cd backend
+npm install --save-dev serverless-plugin-canary-deployments
+```
+
+**Step 2: Update `serverless.yml`**
+Add the plugin and deployment settings to your backend configuration:
+
+```yaml
+plugins:
+  - serverless-plugin-canary-deployments
+
+custom:
+  deploymentSettings:
+    type: Linear10PercentEvery1Minute
+    alias: Live
+    preTrafficHook: preHook
+    postTrafficHook: postHook
+    alarms:
+      - ApiGateway5xxErrorAlarm
+      - LambdaErrorAlarm
+
+functions:
+  api:
+    handler: dist/main.handler
+    events:
+      - http:
+          path: /{proxy+}
+          method: any
+    deploymentSettings:
+      type: Linear10PercentEvery1Minute
+      alias: Live
+```
+
+### 13.3 Deployment Lifecycle
+
+When you run `npx serverless deploy --stage production` with this configuration, the following happens:
+1. **Infrastructure**: Serverless deploys the new Lambda version.
+2. **Pre-Traffic Hook**: CodeDeploy runs a specific Lambda function (e.g., `preHook`) to run integration tests before any user traffic hits the new version.
+3. **Traffic Shifting**: CodeDeploy manages the API Gateway mapping to send 10% of traffic to the new version, increasing by 10% every minute.
+4. **Post-Traffic Hook**: Runs after 100% of traffic has shifted successfully.
+5. **Rollback**: If any configured CloudWatch alarms go off during shifting (e.g., elevated `5xx` responses), traffic is instantly reverted to 100% on the old version.
+
+---
 
 ## 14. Security Best Practices
 
@@ -2294,6 +2357,63 @@ echo "Budget created: You'll be alerted at 80% of $5/month"
 ---
 
 ## 18. Troubleshooting
+### 18.6 CloudFormation Stack Deletion Issues
+
+**Symptoms:** Stack stuck in DELETE_IN_PROGRESS or fails to delete resources (e.g., S3 buckets, RDS, ElastiCache)
+
+**Solutions:**
+
+```bash
+# 1. Check stack status
+aws cloudformation describe-stacks \
+  --stack-name fileflow-backend-prod \
+  --region $AWS_REGION
+
+# 2. List stack resources and their status
+aws cloudformation describe-stack-resources \
+  --stack-name fileflow-backend-prod \
+  --region $AWS_REGION
+
+# 3. Manually empty S3 buckets (required for deletion)
+aws s3 rm s3://fileflow-uploads-prod-<your-account-id> --recursive
+
+# 4. Delete S3 bucket manually if needed
+aws s3api delete-bucket \
+  --bucket fileflow-uploads-prod-<your-account-id> \
+  --region $AWS_REGION
+
+# 5. Check for RDS snapshots or deletion protection
+aws rds describe-db-instances \
+  --db-instance-identifier fileflow-db \
+  --region $AWS_REGION
+# Remove deletion protection if enabled:
+aws rds modify-db-instance \
+  --db-instance-identifier fileflow-db \
+  --no-deletion-protection \
+  --region $AWS_REGION
+
+# 6. Delete RDS instance manually if needed
+aws rds delete-db-instance \
+  --db-instance-identifier fileflow-db \
+  --skip-final-snapshot \
+  --region $AWS_REGION
+
+# 7. Delete ElastiCache cluster manually if needed
+aws elasticache delete-cache-cluster \
+  --cache-cluster-id fileflow-redis \
+  --region $AWS_REGION
+
+# 8. Retry stack deletion
+aws cloudformation delete-stack \
+  --stack-name fileflow-backend-prod \
+  --region $AWS_REGION
+```
+
+**Notes:**
+- Always empty S3 buckets before deleting them.
+- Remove deletion protection from RDS before deletion.
+- Check CloudFormation console for resource-specific errors.
+- After manual cleanup, retry stack deletion.
 
 ### 18.1 ECS Task Won't Start
 

@@ -1,17 +1,17 @@
-# 📚 FileFlow POC - Infrastructure & CI/CD Documentation
+# 📚 FileFlow POC - Serverless Infrastructure & CI/CD Documentation (AWS Free Tier)
 
-> Complete AWS deployment guide for production-ready, scalable full-stack applications
+> Complete AWS serverless deployment guide for production-ready, scalable full-stack applications with zero AWS cost (Free Tier)
 
 ## 🎯 What You'll Find Here
 
-This documentation suite provides **everything you need** to deploy a production-grade application on AWS from scratch, including:
+This documentation suite provides **everything you need** to deploy a production-grade, fully serverless application on AWS from scratch, including:
 
-- ✅ Step-by-step infrastructure setup (VPC, ECS, RDS, S3, etc.)
+- ✅ Step-by-step serverless infrastructure setup (VPC, Lambda, API Gateway, RDS, S3, etc.)
 - ✅ Automated CI/CD pipelines with GitHub Actions
-- ✅ Zero-downtime Blue/Green deployments
-- ✅ Comprehensive monitoring and logging
+- ✅ Zero-downtime Blue/Green deployments (CodeDeploy)
+- ✅ Comprehensive monitoring and logging (CloudWatch, Free Tier)
 - ✅ Security best practices
-- ✅ Cost optimization strategies
+- ✅ Cost optimization strategies (Free Tier, $0/month)
 - ✅ Troubleshooting guides
 
 ---
@@ -19,7 +19,7 @@ This documentation suite provides **everything you need** to deploy a production
 ## 📖 Documentation Structure
 
 ### 1. **[INFRASTRUCTURE-CICD-GUIDE.md](./INFRASTRUCTURE-CICD-GUIDE.md)** ⭐
-**The Complete Guide** - 3,663 lines | 96 KB | Est. 8-12 hours to implement
+**The Complete Guide** - Serverless, Free Tier, Blue/Green | Est. 8-12 hours to implement
 
 **What's Inside:**
 - 18 comprehensive sections covering every aspect of deployment
@@ -29,24 +29,22 @@ This documentation suite provides **everything you need** to deploy a production
 - Cost breakdowns (~$124/month estimate)
 
 **Sections:**
-1. Overview & Architecture
+1. Overview & Serverless Architecture (AWS Free Tier)
 2. Prerequisites
 3. AWS Account Setup
 4. Network Infrastructure (VPC, Subnets, Security Groups)
-5. Database & Cache (RDS PostgreSQL, ElastiCache Redis)
-6. Storage & Queue (S3, SQS with DLQ)
-7. Container Registry (ECR)
-8. Load Balancer (ALB with health checks)
-9. ECS Cluster & Services (Fargate, auto-scaling)
-10. Frontend Hosting (S3, CloudFront)
-11. CI/CD Pipeline (GitHub Actions)
-12. Monitoring & Logging (CloudWatch)
-13. Blue/Green Deployment (CodeDeploy)
-14. Security Best Practices
-15. Testing the Deployment
-16. Rollback Procedures
-17. Cost Optimization
-18. Troubleshooting
+5. Database & Cache (RDS PostgreSQL, ElastiCache Redis, Free Tier)
+6. Storage & Queue (S3, SQS with DLQ, Free Tier)
+7. Serverless Backend (Lambda, API Gateway, Free Tier)
+8. Blue/Green Deployment (CodeDeploy)
+9. Frontend Hosting (S3, CloudFront, Free Tier)
+10. CI/CD Pipeline (GitHub Actions)
+11. Monitoring & Logging (CloudWatch, Free Tier)
+12. Security Best Practices
+13. Testing the Deployment
+14. Rollback Procedures
+15. Cost Optimization (Free Tier, $0/month)
+16. Troubleshooting
 
 **Start here if:** You want a complete, end-to-end deployment guide.
 
@@ -155,7 +153,7 @@ open QUICK-REFERENCE.md
 - ⚡ **AWS Lambda** for serverless compute
 - 🚪 **API Gateway** for REST API endpoints
 - 📈 **Auto-scaling** (Scale to zero, built-in concurrency)
-- 💚 **Serverless Framework** for automated deployments
+- 💚 **Serverless Framework** for automated deployments with Canary/Blue-Green support
 
 ### Data Layer
 - 🗄️ **RDS PostgreSQL** (Multi-AZ)
@@ -246,6 +244,7 @@ After completing this guide, you will:
 
 - ✅ Understand production AWS architecture patterns
 - ✅ Deploy Serverless applications using the Serverless Framework
+- ✅ Implement zero-downtime Canary/Blue-Green deployments
 - ✅ Configure API Gateway and AWS Lambda
 - ✅ Set up comprehensive monitoring and alerting
 - ✅ Implement security best practices with IAM

@@ -1,0 +1,205 @@
+service: fileflow-backend
+frameworkVersion: '4'
+
+build:
+  esbuild:
+    external:
+      - '@nestjs/websockets/socket-module'
+      - '@nestjs/microservices/microservices-module'
+      - '@nestjs/microservices'
+      - 'class-transformer/storage'
+
+params:
+  default:
+    vpcId: ${env:VPC_ID}
+    subnetId1: ${env:SUBNET_ID_1}
+    subnetId2: ${env:SUBNET_ID_2}
+    s3BucketName: fileflow-uploads-${sls:stage}-${aws:accountId}
+
+plugins:
+  - serverless-offline
+  - serverless-deployment-bucket
+  - serverless-plugin-cloudwatch
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1
+  stage: prod
+
+  environment:
+    PORT: 3000
+    NODE_ENV: ${env:NODE_ENV}
+    DATABASE_URL: ${env:DATABASE_URL}
+    JWT_SECRET: ${env:JWT_SECRET}
+    JWT_EXPIRES_IN: ${env:JWT_EXPIRES_IN}
+    S3_BUCKET_NAME: ${param:s3BucketName}
+    SQS_QUEUE_URL: ${env:SQS_QUEUE_URL}
+    REDIS_URL: ${env:REDIS_URL}
+    FRONTEND_URL: ${env:FRONTEND_URL}
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - s3:*
+            - sqs:*
+            - rds:*
+            - elasticache:*
+            - logs:*
+            - cloudwatch:*
+          Resource: '*'
+
+functions:
+  health:
+    handler: src/main.handler
+    events:
+      - httpApi:
+          path: /health
+          method: GET
+      - httpApi:
+          path: /ready
+          method: GET
+
+  auth:
+    handler: src/main.handler
+    events:
+      - httpApi:
+          path: /auth/register
+          method: POST
+      - httpApi:
+          path: /auth/login
+          method: POST
+      - httpApi:
+          path: /auth/me
+          method: GET
+
+  dashboard:
+    handler: src/main.handler
+    events:
+      - httpApi:
+          path: /dashboard/summary
+          method: GET
+
+  records:
+    handler: src/main.handler
+    events:
+      - httpApi:
+          path: /records
+          method: POST
+      - httpApi:
+          path: /records
+          method: GET
+      - httpApi:
+          path: /records/{id}
+          method: GET
+      - httpApi:
+          path: /records/{id}
+          method: PATCH
+      - httpApi:
+          path: /records/{id}
+          method: DELETE
+
+  uploads:
+    handler: src/main.handler
+    events:
+      - httpApi:
+          path: /uploads/presign
+          method: POST
+      - httpApi:
+          path: /uploads/complete
+          method: POST
+
+resources:
+  Resources:
+    FileflowUploadsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${param:s3BucketName}
+        VersioningConfiguration:
+          Status: Enabled
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+
+    FileflowDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: fileflow-processing-dlq
+        MessageRetentionPeriod: 1209600
+
+    FileflowProcessingQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: fileflow-processing-queue
+        VisibilityTimeout: 300
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - FileflowDLQ
+              - Arn
+          maxReceiveCount: 3
+
+    FileflowRDS:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        DBInstanceClass: db.t3.micro
+        Engine: postgres
+        MasterUsername: fileflow_user
+        MasterUserPassword: fileflow_pass
+        AllocatedStorage: 20
+        DBInstanceIdentifier: fileflow-db
+        PubliclyAccessible: false
+        BackupRetentionPeriod: 1
+        MultiAZ: true
+        StorageEncrypted: true
+
+    FileflowRedisSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for FileFlow Redis
+        VpcId: ${param:vpcId}
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 6379
+            ToPort: 6379
+            CidrIp: 10.0.0.0/8
+
+    FileflowRedisSubnetGroup:
+      Type: AWS::ElastiCache::SubnetGroup
+      Properties:
+        Description: Subnet group for FileFlow Redis
+        SubnetIds:
+          - ${param:subnetId1}
+          - ${param:subnetId2}
+
+    FileflowRedis:
+      Type: AWS::ElastiCache::CacheCluster
+      Properties:
+        Engine: redis
+        CacheNodeType: cache.t4g.micro
+        NumCacheNodes: 1
+        ClusterName: fileflow-redis
+        PreferredAvailabilityZone: us-east-1a
+        VpcSecurityGroupIds:
+          - !GetAtt FileflowRedisSecurityGroup.GroupId
+        CacheSubnetGroupName: !Ref FileflowRedisSubnetGroup
+
+    FileflowLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/fileflow-backend
+        RetentionInDays: 3
+
+package:
+  exclude:
+    - node_modules/**
+    - test/**
+    - scripts/**
+    - Dockerfile
+    - README.md
+    - .env
+    - .env.example

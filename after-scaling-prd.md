@@ -1,9 +1,9 @@
-# PRD — Scaled AWS POC for React + NestJS
+# PRD — Serverless AWS POC (React + NestJS)
 
 **Working title:** FileFlow POC  
 **Version:** 1.0  
 **Type:** Proof of Concept / Interview showcase  
-**Primary goal:** Demonstrate a small application whose main value is the AWS deployment architecture, CI/CD, low-downtime releases, and scalable backend patterns.
+**Primary goal:** Demonstrate a small application whose main value is a fully serverless AWS architecture, CI/CD with blue/green deployment, zero-downtime releases, and scalable backend patterns—all within AWS Free Tier (no cost).
 
 ---
 
@@ -12,16 +12,15 @@
 This PRD defines a deliberately small product that is feature-light but infrastructure-rich.
 
 **Guiding principle:** keep the codebase small, but include enough real product features to justify:
-- S3 + CloudFront
-- ECS Fargate
-- ALB
-- CodeDeploy blue/green
-- ECR
-- Redis
-- SQS
-- RDS
-- CloudWatch
-- file uploads
+- S3 + CloudFront (Free Tier)
+- AWS Lambda (serverless backend & worker)
+- API Gateway (serverless routing)
+- CodeDeploy blue/green (zero-downtime)
+- Redis (ElastiCache, Free Tier)
+- SQS (Free Tier)
+- RDS PostgreSQL (Free Tier)
+- CloudWatch (Free Tier)
+- file uploads (S3)
 
 ---
 
@@ -34,27 +33,28 @@ The application will be a **small document/task portal** built with **React + Ne
 Users can sign in, create a small task or document record, upload a file, view a dashboard list, and trigger an asynchronous background job such as thumbnail generation, virus-scan simulation, metadata extraction, or notification processing. The app should look realistic enough to discuss in interviews, but remain simple enough to build in a short time.
 
 The real showcase is not the product domain. The showcase is the **"before vs after" AWS architecture transformation**:
-- static frontend moved to **S3 + CloudFront**
-- backend moved from single server to **ECS Fargate**
-- deployment improved with **ECR + CodeDeploy blue/green**
-- repeated reads optimized with **Redis**
-- background work decoupled via **SQS**
-- relational data stored in **RDS**
-- observability added through **CloudWatch**
+- static frontend moved to **S3 + CloudFront** (Free Tier)
+- backend moved from single server to **AWS Lambda + API Gateway** (serverless, Free Tier)
+- deployment improved with **CodeDeploy blue/green** (zero-downtime)
+- repeated reads optimized with **Redis** (ElastiCache, Free Tier)
+- background work decoupled via **SQS** (Free Tier)
+- relational data stored in **RDS PostgreSQL** (Free Tier)
+- observability added through **CloudWatch** (Free Tier)
 
 ---
 
 ## 3. Product Vision
 
-Build a compact but realistic production-style application that demonstrates how AWS architecture decisions improve:
+Build a compact but realistic production-style application that demonstrates how AWS serverless architecture decisions improve:
 - deployment speed
 - rollback safety
-- downtime reduction
-- scalability under traffic spikes
-- resilience of backend processing
+- downtime reduction (blue/green)
+- scalability under traffic spikes (Lambda auto-scaling)
+- resilience of backend processing (SQS + Lambda)
 - separation of synchronous and asynchronous workloads
+- **Zero AWS cost**: All services run within Free Tier limits
 
-This POC should be easy to explain in interviews in 5 to 10 minutes.
+This POC should be easy to explain in interviews in 5 to 10 minutes, highlighting serverless, blue/green deployment, and zero AWS cost.
 
 ---
 

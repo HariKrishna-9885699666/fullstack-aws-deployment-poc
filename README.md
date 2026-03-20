@@ -578,6 +578,83 @@ Potential improvements for scaling further:
 
 UNLICENSED - For demonstration purposes only
 
+## 🚀 Deployment Instructions
+
+### Backend & Worker (NestJS Lambda)
+1. Ensure AWS credentials are configured and valid (run `aws sts get-caller-identity` to verify).
+2. Navigate to the backend or worker directory:
+	```bash
+	cd backend
+	# or
+	cd worker
+	```
+3. Deploy to AWS Lambda & API Gateway:
+	```bash
+	npx serverless deploy
+	```
+	- This will deploy your service as a Lambda function and set up API Gateway endpoints.
+	- Blue/green deployment is managed automatically by AWS CodeDeploy and Serverless Framework.
+
+### Frontend (React, S3/CloudFront)
+1. Navigate to the frontend directory:
+	```bash
+	cd frontend
+	```
+2. Build the frontend app:
+	```bash
+	yarn build
+	```
+3. Upload the build output (usually in `dist/`) to your S3 bucket configured for static hosting.
+4. Invalidate the CloudFront cache to update users to the new version:
+	- Use AWS Console or CLI to invalidate cache.
+
+### Docker/ECS (Optional)
+1. Build Docker images:
+	```bash
+	cd backend
+	docker build -t fileflow-backend:latest .
+	cd ../worker
+	docker build -t fileflow-worker:latest .
+	```
+2. Push images to ECR and deploy to ECS if your infrastructure uses containers.
+
+### Verification
+- After deployment, check:
+  - API endpoints (API Gateway/Lambda)
+  - S3 static site for frontend
+  - CloudWatch logs for backend and worker
+  - Health/readiness endpoints
+
+### Removing/Deleting Deployments
+
+#### Backend & Worker (Serverless Lambda)
+1. Navigate to the backend or worker directory:
+	```bash
+	cd backend
+	# or
+	cd worker
+	```
+2. Remove the deployment from AWS:
+	```bash
+	npx serverless remove
+	```
+	- This will delete all deployed Lambda functions, API Gateway endpoints, and related resources for that service.
+
+#### Frontend (S3/CloudFront)
+1. Delete files from the S3 bucket (via AWS Console or CLI):
+	```bash
+	aws s3 rm s3://<your-bucket-name> --recursive
+	```
+2. Optionally, delete the S3 bucket and CloudFront distribution in the AWS Console.
+
+#### Docker/ECS (Optional)
+1. Delete ECS services and tasks via AWS Console or CLI.
+2. Delete ECR images if needed:
+	```bash
+	aws ecr batch-delete-image --repository-name <repo-name> --image-ids imageTag=<tag>
+	```
+
+---
 ## 👨‍💻 Author
 
 Built as a portfolio project to demonstrate AWS architecture transformation and deployment best practices.
